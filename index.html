@@ -1,0 +1,1598 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Desglose de Liquidación · Conecta Conductor</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.8.2/jspdf.plugin.autotable.min.js"></script>
+<style>
+  :root{
+    --navy:#1E2761; --teal:#00A896; --teal-d:#0D7377;
+    --ink:#1E293B; --muted:#64748B; --line:#E2E8F0;
+    --bg:#F1F5F9; --card:#FFFFFF;
+    --green:#0E8C6A; --green-bg:#E7F5EF;
+    --red:#C0392B; --red-bg:#FBEEEC;
+    --amber:#B7791F; --amber-bg:#FBF3E2;
+    --blue:#2563EB; --blue-bg:#EAF0FE;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;
+    background:var(--bg);color:var(--ink);line-height:1.5;padding:24px;font-size:14px}
+  .wrap{max-width:1180px;margin:0 auto}
+  header.top{margin-bottom:20px}
+  .top-row{display:flex;justify-content:space-between;align-items:flex-start;gap:16px}
+  header.top h1{font-size:22px;font-weight:800;color:var(--navy);letter-spacing:-.3px}
+  header.top p{color:var(--muted);font-size:13px;margin-top:2px}
+
+  .drop{position:relative;background:var(--card);border:2px dashed var(--line);border-radius:14px;
+    padding:34px 24px;text-align:center;cursor:pointer;transition:.15s;margin-bottom:22px;overflow:hidden}
+  .drop:hover{border-color:var(--teal);background:#FAFFFE}
+  .drop.drag{border-color:var(--teal);background:#F0FCFA}
+  .drop .ic{font-size:34px;margin-bottom:8px;position:relative;z-index:1}
+  .drop b{color:var(--navy);font-size:15px;position:relative;z-index:1}
+  .drop small{display:block;color:var(--muted);margin-top:4px;position:relative;z-index:1}
+  .drop input[type=file]{position:absolute;inset:0;width:100%;height:100%;
+    opacity:0;cursor:pointer;z-index:2;border:0;padding:0;margin:0}
+  .drop-pex{padding:24px;margin-bottom:16px}
+  .drop-pex .ic{font-size:28px}
+  .pexhint{background:var(--amber-bg);border:1px solid #EBD9B0;color:var(--amber);
+    padding:11px 15px;border-radius:10px;margin-bottom:14px;font-size:13px;display:none}
+  .pexhint.show{display:block}
+  .pexclear{color:var(--red);font-weight:700;cursor:pointer;text-decoration:underline;margin-left:6px}
+  .pexmeta{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:14px}
+  .pexchip{font-size:12px;font-weight:600;padding:4px 11px;border-radius:20px;background:#EEF1F5;color:var(--muted)}
+  .pexchip.apto{background:#FEF0E7;color:#C2410C}
+  .pexchip.warn{background:var(--amber-bg);color:var(--amber)}
+  .pexconcepts-grid{display:grid;grid-template-columns:repeat(2,1fr);gap:12px;margin-bottom:8px}
+  @media(max-width:760px){.pexconcepts-grid{grid-template-columns:1fr}}
+  .pexconcept{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:14px 16px}
+  .pexconcept-zero{opacity:.6}
+  .pexconcept-head{display:flex;justify-content:space-between;align-items:flex-start;gap:10px}
+  .pexconcept-head .pct{font-size:13.5px;font-weight:700;color:var(--navy)}
+  .pexconcept-head .pct small{display:block;font-size:11.5px;color:var(--muted);font-weight:500;margin-top:2px}
+  .pexconcept-head .pcv{font-size:17px;font-weight:800;color:var(--red);font-variant-numeric:tabular-nums;white-space:nowrap}
+  .pexconcept-head .pcv.zero{color:#94A3B8}
+  .pexna{margin-top:8px;font-size:12px;color:var(--muted);font-style:italic}
+  .pextoggle{display:inline-block;margin-top:9px;font-size:12px;color:var(--teal-d);cursor:pointer;font-weight:600;user-select:none}
+  .pextoggle:hover{text-decoration:underline}
+  .pexdetail{margin-top:9px;display:none}
+  .pexdetail.show{display:block}
+  table.pexd{width:100%;border-collapse:collapse;font-size:12px}
+  table.pexd th{background:#F8FAFC;text-align:left;padding:6px 8px;font-size:10.5px;text-transform:uppercase;
+    letter-spacing:.3px;color:var(--muted);font-weight:700;border-bottom:1px solid var(--line)}
+  table.pexd th.num{text-align:right}
+  table.pexd td{padding:6px 8px;border-bottom:1px solid #F4F6F9;font-variant-numeric:tabular-nums}
+  table.pexd td.num{text-align:right}
+  .pexgrand{background:var(--navy);color:#fff;border-radius:12px;padding:16px 20px;margin-top:12px;display:flex;flex-wrap:wrap;align-items:center;gap:8px 20px}
+  .pexgrand .gl{font-size:13px;opacity:.85} .pexgrand .gv{font-size:22px;font-weight:800;font-variant-numeric:tabular-nums}
+  .pexgrand .sp{flex:1}
+  .pexcheck{font-size:12px;padding:3px 10px;border-radius:20px;font-weight:700}
+  .pexcheck.ok{background:rgba(14,140,106,.25);color:#6EE7B7} .pexcheck.warn{background:rgba(186,117,23,.25);color:#FCD9A0}
+  .drow{border-bottom:1px solid #F1F5F9}
+  .drow:last-child{border-bottom:none}
+  .drow .row{border-bottom:none}
+  .drow .caret{display:inline-block;width:12px;color:var(--teal-d);font-size:11px}
+  .ddetail{display:none;padding:0 0 12px 16px}
+  .ddetail.show{display:block}
+  .pexnote{margin-top:10px;padding:10px 12px;background:var(--blue-bg);border-radius:9px;font-size:12px;color:var(--blue)}
+  .pexsub{margin:8px 0;border:1px solid #E6E0F0;border-radius:10px;overflow:hidden;background:#FBFAFE}
+  .pexsub-head{display:flex;justify-content:space-between;align-items:center;padding:9px 14px;background:#F3EFFB;border-bottom:1px solid #E6E0F0}
+  .pexsub-title{font-size:13px;font-weight:800;color:#5B3FA8}
+  .pexsub-total{font-size:14px;font-weight:800;color:var(--red);font-variant-numeric:tabular-nums}
+  .pexsub-body{padding:4px 14px}
+  .btn-pdf{margin-left:auto;background:var(--teal);color:#fff;border:none;border-radius:8px;
+    padding:5px 12px;font-size:12px;font-weight:700;cursor:pointer;font-family:inherit;transition:.12s}
+  .btn-pdf:hover{background:var(--teal-d)}
+  .pexbadge{display:inline-block;padding:1px 7px;border-radius:5px;font-size:10px;font-weight:700}
+  .pb-per{background:#EDE9FE;color:#7C3AED} .pb-inc{background:#FEF0E7;color:#C2410C}
+  .pb-efe{background:var(--green-bg);color:var(--green)} .pb-norm{background:var(--blue-bg);color:var(--blue)}
+
+  .err{background:var(--red-bg);border:1px solid #F0C9C4;color:var(--red);
+    padding:12px 16px;border-radius:10px;margin-bottom:18px;font-size:13px;display:none}
+  .err.show{display:block}
+
+  #app{display:none}
+  #app.show{display:block}
+
+  .meta-bar{display:flex;flex-wrap:wrap;gap:8px 22px;align-items:center;
+    background:var(--navy);color:#fff;border-radius:12px;padding:14px 20px;margin-bottom:20px}
+  .meta-bar .who{font-size:17px;font-weight:700}
+  .meta-bar .chip{background:rgba(255,255,255,.14);padding:4px 11px;border-radius:20px;font-size:12px;font-weight:600}
+  .meta-bar .sp{flex:1}
+
+  .grid{display:grid;gap:16px;margin-bottom:16px}
+  .g4{grid-template-columns:repeat(4,1fr)}
+  .g3{grid-template-columns:repeat(3,1fr)}
+  .g2{grid-template-columns:repeat(2,1fr)}
+  @media(max-width:920px){.g4{grid-template-columns:repeat(2,1fr)}.g3{grid-template-columns:1fr}.g2{grid-template-columns:1fr}}
+  @media(max-width:560px){.g4{grid-template-columns:1fr}}
+
+  .kpi{background:var(--card);border:1px solid var(--line);border-radius:13px;padding:16px 18px;position:relative;overflow:hidden}
+  .kpi .lab{font-size:12px;color:var(--muted);font-weight:600;text-transform:uppercase;letter-spacing:.3px}
+  .kpi .val{font-size:26px;font-weight:800;margin-top:6px;letter-spacing:-.5px}
+  .kpi .sub{font-size:12px;color:var(--muted);margin-top:3px}
+  .kpi .tag{position:absolute;top:14px;right:14px;font-size:11px;font-weight:700;padding:3px 9px;border-radius:20px}
+  .kpi.depo{border-left:4px solid var(--green)} .kpi.depo .val{color:var(--green)}
+  .kpi.info{border-left:4px solid var(--muted)} .kpi.info .val{color:var(--muted)}
+  .kpi.prod{border-left:4px solid var(--teal)} .kpi.prod .val{color:var(--teal-d)}
+  .kpi.desc{border-left:4px solid var(--red)} .kpi.desc .val{color:var(--red)}
+  .tag.g{background:var(--green-bg);color:var(--green)}
+  .tag.r{background:var(--red-bg);color:var(--red)}
+  .tag.m{background:#EEF1F5;color:var(--muted)}
+
+  .card{background:var(--card);border:1px solid var(--line);border-radius:13px;padding:18px 20px}
+  .card h2{font-size:15px;font-weight:700;color:var(--navy);margin-bottom:14px;display:flex;align-items:center;gap:8px}
+  .card h2 .dot{width:8px;height:8px;border-radius:50%;background:var(--teal)}
+
+  .row{display:flex;justify-content:space-between;align-items:center;padding:9px 0;border-bottom:1px solid #F1F5F9;font-size:13.5px}
+  .row:last-child{border-bottom:none}
+  .row .l{color:var(--ink)} .row .l .hint{display:block;font-size:11.5px;color:var(--muted);margin-top:1px}
+  .row .v{font-weight:700;font-variant-numeric:tabular-nums;white-space:nowrap}
+  .row.tot{border-top:2px solid var(--line);margin-top:4px;padding-top:11px;font-weight:700}
+  .row.tot .l{font-weight:700;color:var(--navy)}
+  .row.tot .v{font-size:16px}
+  .v.pos{color:var(--green)} .v.neg{color:var(--red)} .v.zero{color:#94A3B8}
+  .num.pos{color:var(--green)} .num.zero{color:#94A3B8} .num.amber{color:var(--amber)}
+
+  table.paytable{width:100%;border-collapse:collapse;font-size:13px}
+  table.paytable th{text-align:left;padding:9px 8px;font-size:11px;text-transform:uppercase;
+    letter-spacing:.3px;color:var(--muted);font-weight:700;border-bottom:2px solid var(--line)}
+  table.paytable th.num{text-align:right}
+  table.paytable td{padding:10px 8px;border-bottom:1px solid #F1F5F9;font-variant-numeric:tabular-nums;font-weight:600}
+  table.paytable td.num{text-align:right}
+  table.paytable tr.trtot td{border-top:2px solid var(--line);border-bottom:none;font-weight:800;color:var(--navy);padding-top:11px}
+  table.paytable tr:hover td{background:#FAFCFE}
+
+  .paychip{display:inline-flex;align-items:center;gap:6px;padding:2px 9px;border-radius:7px;font-size:11px;font-weight:700}
+  .pc-emp{background:var(--blue-bg);color:var(--blue)}
+  .pc-vis{background:#EDE9FE;color:#7C3AED}
+  .pc-efe{background:var(--green-bg);color:var(--green)}
+  .pc-yap{background:#FEF0E7;color:#C2410C}
+  .pc-oth{background:#EEF1F5;color:var(--muted)}
+
+  .fact{border-radius:11px;padding:16px;border:1px solid var(--line)}
+  .fact.corp{background:linear-gradient(135deg,#EAF0FE,#F5F8FF)}
+  .fact.part{background:linear-gradient(135deg,#F3EDFE,#FAF7FF)}
+  .fact .rs{font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.4px;color:var(--muted)}
+  .fact .nm{font-size:14px;font-weight:700;color:var(--navy);margin:2px 0 10px}
+  .fact .amt{font-size:24px;font-weight:800;letter-spacing:-.5px}
+  .fact.corp .amt{color:var(--blue)} .fact.part .amt{color:#7C3AED}
+  .fact .cnt{font-size:12px;color:var(--muted);margin-top:3px}
+
+  table.det{width:100%;border-collapse:collapse;font-size:12.5px}
+  table.det th{background:#F8FAFC;text-align:left;padding:8px 10px;font-size:11px;
+    text-transform:uppercase;letter-spacing:.3px;color:var(--muted);font-weight:700;
+    border-bottom:2px solid var(--line);position:sticky;top:0;cursor:pointer;user-select:none}
+  table.det th:hover{color:var(--navy)}
+  table.det td{padding:8px 10px;border-bottom:1px solid #F1F5F9;font-variant-numeric:tabular-nums}
+  table.det tr:hover td{background:#FAFCFE}
+  table.det td.num{text-align:right}
+  .tablewrap{max-height:440px;overflow:auto;border:1px solid var(--line);border-radius:11px}
+
+  .filters{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:14px;align-items:center}
+  .filters select,.filters input{padding:8px 11px;border:1px solid var(--line);border-radius:9px;font-size:13px;font-family:inherit;background:#fff}
+  .filters .fcount{margin-left:auto;font-size:12px;color:var(--muted)}
+
+  .pill{display:inline-block;padding:2px 8px;border-radius:6px;font-size:11px;font-weight:700;background:#EEF1F5;color:var(--muted)}
+  .pill.corp{background:var(--blue-bg);color:var(--blue)}
+  .pill.part{background:#EDE9FE;color:#7C3AED}
+
+  .explain{background:#FAFBFD;border:1px solid var(--line);border-radius:11px;padding:14px 16px;font-size:12.5px;color:var(--muted);margin-top:8px}
+  .explain b{color:var(--ink)}
+
+  .actions{display:flex;gap:10px;margin:18px 0 8px;flex-wrap:wrap}
+  .btn{padding:10px 16px;border:none;border-radius:10px;font-size:13.5px;font-weight:700;cursor:pointer;font-family:inherit;transition:.12s}
+  .btn.primary{background:var(--teal);color:#fff} .btn.primary:hover{background:var(--teal-d)}
+  .btn.ghost{background:#fff;color:var(--navy);border:1px solid var(--line)} .btn.ghost:hover{background:#F8FAFC}
+
+  .formula{background:var(--navy);color:#fff;border-radius:12px;padding:16px 20px;margin-top:16px}
+  .formula h3{font-size:13px;font-weight:700;margin-bottom:10px;opacity:.85}
+  .formula .eq{display:flex;flex-wrap:wrap;align-items:center;gap:8px;font-size:13px}
+  .formula .term{background:rgba(255,255,255,.12);padding:6px 11px;border-radius:8px;font-weight:600}
+  .formula .term .n{display:block;font-size:11px;opacity:.7;font-weight:500}
+  .formula .op{font-size:18px;font-weight:700;opacity:.6}
+  .formula .term.res{background:var(--teal)}
+  .sec-title{font-size:13px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.4px;margin:24px 0 12px}
+  .foot{text-align:center;color:#94A3B8;font-size:11.5px;margin-top:30px}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header class="top">
+    <div class="top-row">
+      <div>
+        <h1>Desglose de Liquidación</h1>
+        <p>Conecta Conductor · Sube el Excel de liquidación y obtén el detalle claro para explicárselo al conductor</p>
+      </div>
+      <button class="btn ghost" id="btnRefrescar" style="display:none">↻ Cambiar liquidación</button>
+    </div>
+  </header>
+
+  <div class="drop" id="drop">
+    <div class="ic">📄</div>
+    <b>Haz clic o arrastra aquí el Excel de liquidación</b>
+    <small>Formato .xlsx con las hojas de resumen y detalle (ej. Liq_3206.xlsx)</small>
+    <input type="file" id="file" accept=".xlsx,.xls">
+  </div>
+  <div class="pexhint" id="pexKeptHint" style="display:none"></div>
+
+  <div class="err" id="err"></div>
+
+  <div id="app">
+    <div class="meta-bar" id="metaBar"></div>
+
+    <!-- KPIs principales -->
+    <div class="grid g4" id="kpis"></div>
+
+    <div class="sec-title">Depósito por razón social</div>
+    <div class="grid g3" id="depoBreak"></div>
+
+    <div class="sec-title">Detalle por tipo de pago</div>
+    <div class="grid g2">
+      <div class="card">
+        <h2><span class="dot"></span>¿Qué recaudó y cómo?</h2>
+        <div id="pagos"></div>
+        <div class="explain" id="pagosExplain"></div>
+      </div>
+      <div class="card">
+        <h2><span class="dot"></span>Montos a facturar (2 razones sociales)</h2>
+        <div class="grid g2" id="factura" style="margin-bottom:0"></div>
+        <div class="explain" id="factExplain"></div>
+      </div>
+    </div>
+
+    <!-- ============ CARGA PEX ============ -->
+    <div class="sec-title">Archivos PEX (para detallar los descuentos de peajes)</div>
+    <div class="pexhint" id="pexHint"></div>
+    <div class="drop drop-pex" id="dropPex">
+      <div class="ic">🛣️</div>
+      <b>Haz clic o arrastra los archivos PEX de las semanas a descontar</b>
+      <small id="dropPexSub">Puedes cargar varios a la vez (ej. semana 22, 23 y 24). El detalle aparecerá en "Descuentos y reposiciones".</small>
+      <input type="file" id="filePex" accept=".xlsx,.xls" multiple>
+    </div>
+    <div id="pexResult"></div>
+
+    <div class="sec-title">Descuentos y reposiciones</div>
+    <div class="grid g2">
+      <div class="card">
+        <h2 style="display:flex;align-items:center;gap:8px">
+          <span class="dot" style="background:var(--red)"></span>Descuentos aplicados
+          <button class="btn-pdf" id="btnPexPdf" style="display:none">⬇ PDF de PEX</button>
+        </h2>
+        <div id="descuentos"></div>
+      </div>
+      <div class="card">
+        <h2><span class="dot" style="background:var(--green)"></span>Reposiciones y abonos</h2>
+        <div id="reposiciones"></div>
+      </div>
+    </div>
+
+    <div class="sec-title">Detalle de servicios</div>
+    <div class="card">
+      <div class="filters">
+        <select id="fPago"><option value="">Todos los medios de pago</option></select>
+        <select id="fRazon">
+          <option value="">Corporativo y Particular</option>
+          <option value="corp">Solo Corporativo</option>
+          <option value="part">Solo Particular</option>
+        </select>
+        <input type="text" id="fCliente" placeholder="Buscar cliente…" style="min-width:200px">
+        <span class="fcount" id="fCount"></span>
+      </div>
+      <div class="tablewrap">
+        <table class="det" id="detTable">
+          <thead><tr>
+            <th data-k="n">#</th>
+            <th data-k="servicio">N° Servicio</th>
+            <th data-k="fecha">Fecha</th>
+            <th data-k="cliente">Cliente</th>
+            <th data-k="razon">Razón</th>
+            <th data-k="medio">Medio pago</th>
+            <th data-k="peaje" class="num">Peaje</th>
+            <th data-k="total" class="num">Total svc</th>
+            <th data-k="conductor" class="num">Para conductor</th>
+          </tr></thead>
+          <tbody></tbody>
+        </table>
+      </div>
+    </div>
+
+    <div class="actions">
+      <button class="btn ghost" id="btnOtro">↻ Cargar otra liquidación</button>
+    </div>
+  </div>
+
+  <div class="foot">Herramienta local · Los archivos no se suben a ningún servidor, todo el procesamiento ocurre en tu navegador.</div>
+</div>
+
+<script>
+const F = n => {
+  const x = Number(n)||0;
+  return 'S/ ' + x.toLocaleString('es-PE',{minimumFractionDigits:2,maximumFractionDigits:2});
+};
+const N = v => { const x = parseFloat(v); return isNaN(x)?0:x; };
+const norm = s => (s==null?'':String(s)).trim();
+const up = s => norm(s).toUpperCase();
+
+let SERVICES = [];   // detalle parseado
+let SORT = {k:'n',dir:1};
+let LIQ = null;      // liquidación parseada completa (para cruce PEX)
+let PEX_WEEKS = [];  // archivos PEX cargados y procesados
+let PEX_COMPUTED = null; // cómputo PEX agregado
+
+// ---- Buscar valor por etiqueta en una matriz (resumen) ----
+// Prioriza match EXACTO; entre varios matches, prefiere el que tenga un número a la derecha.
+function findLabel(grid, label, {maxScan=8}={}){
+  const L = up(label);
+  const exact=[], partial=[];
+  for(let r=0;r<grid.length;r++){
+    for(let c=0;c<(grid[r]||[]).length;c++){
+      const cell = up(grid[r][c]);
+      if(cell===L) exact.push([r,c]);
+      else if(cell.includes(L)) partial.push([r,c]);
+    }
+  }
+  const tryGet = ([r,c])=>{
+    for(let k=1;k<=maxScan;k++){
+      const v = grid[r][c+k];
+      if(v!==undefined && v!=='' && !isNaN(parseFloat(v))) return {val:N(v), r, c, vc:c+k};
+    }
+    return null;
+  };
+  for(const m of exact){ const g=tryGet(m); if(g) return g; }
+  for(const m of exact){ return {val:0, r:m[0], c:m[1], vc:null}; }
+  for(const m of partial){ const g=tryGet(m); if(g) return g; }
+  return null;
+}
+function findText(grid, label){
+  const L = up(label);
+  for(let r=0;r<grid.length;r++)
+    for(let c=0;c<(grid[r]||[]).length;c++)
+      if(up(grid[r][c]).includes(L)) return {r,c,row:grid[r]};
+  return null;
+}
+
+function parseWorkbook(wb){
+  const up2 = s => (s==null?'':String(s)).trim().toUpperCase();
+  // localizar hoja de detalle: 1) por nombre con "DETALLE", 2) por contenido (cabecera de servicios)
+  let detalleName=null, resumenName=null;
+  wb.SheetNames.forEach(n=>{ if(up2(n).includes('DETALLE')) detalleName=n; });
+  if(!detalleName){
+    // buscar la hoja cuyo contenido tenga la cabecera de servicios
+    for(const n of wb.SheetNames){
+      const grid=XLSX.utils.sheet_to_json(wb.Sheets[n],{header:1,defval:''});
+      const hit=grid.some(row=>{
+        const r=row.map(up2);
+        return r.some(x=>x.includes('N° SERVICIO')||x.includes('N°SERVICIO')) && r.some(x=>x.includes('TIPO DE PAGO'));
+      });
+      if(hit){ detalleName=n; break; }
+    }
+  }
+  // la hoja resumen es la que NO es la de detalle (prefiere una con "balance" o la más ancha)
+  const others = wb.SheetNames.filter(n=>n!==detalleName);
+  resumenName = others.find(n=>{
+    const grid=XLSX.utils.sheet_to_json(wb.Sheets[n],{header:1,defval:''});
+    return grid.some(row=>row.some(x=>up2(x).includes('BALANCE DE LA SEMANA')||up2(x).includes('MONTO TOTAL A DEPOSITAR')));
+  }) || others[0] || wb.SheetNames[0];
+  if(!detalleName) detalleName = wb.SheetNames.find(n=>n!==resumenName);
+
+  const resumen = XLSX.utils.sheet_to_json(wb.Sheets[resumenName],{header:1,defval:''});
+  const detalle = detalleName ? XLSX.utils.sheet_to_json(wb.Sheets[detalleName],{header:1,defval:''}) : [];
+
+  // ---- META ----
+  let nombre='', movil='', semana='', categoria='', flota='', pexSemanasTexto='';
+  // nombre: fila que contiene el balance o el nombre en mayúsculas largo
+  // nombre: en la fila del balance, tomar la celda que parece nombre propio
+  // (varias palabras en mayúsculas, sin dos puntos, sin la palabra BALANCE/CATEGORÍA)
+  const balRow = findText(resumen,'balance de la semana');
+  if(balRow){
+    const cand = balRow.row.filter(x=>{
+      const U=up(x);
+      return U.length>8 && /^[A-ZÁÉÍÓÚÑ ]+$/.test(U) &&
+        !U.includes('BALANCE') && !U.includes('CATEGOR') && !U.includes(':') &&
+        U.split(/\s+/).length>=2;
+    });
+    if(cand.length) nombre = norm(cand[0]);
+  }
+  // fallback: buscar en toda la grilla una celda con patrón de nombre largo
+  if(!nombre){
+    outer: for(let r=0;r<Math.min(5,resumen.length);r++)
+      for(let c=0;c<(resumen[r]||[]).length;c++){
+        const U=up(resumen[r][c]);
+        if(/^[A-ZÁÉÍÓÚÑ ]{10,}$/.test(U) && U.split(/\s+/).length>=3 &&
+           !U.includes('BALANCE')&&!U.includes('CATEGOR')&&!U.includes('SEMANA')&&!U.includes('LIQUIDA')){
+          nombre=norm(resumen[r][c]); break outer;
+        }
+      }
+  }
+  const movilCell = findLabel(resumen,'Código de móvil');
+  if(movilCell) movil = String(Math.round(movilCell.val)||movilCell.val);
+  const semRow = findText(resumen,'SEMANA DE LIQUIDACIÓN');
+  if(semRow){ semana = norm(semRow.row.find(x=>up(x).includes('SEMANA DE LIQUIDACIÓN'))); }
+  const catRow = findText(resumen,'CATEGORÍA');
+  if(catRow){
+    const idx = catRow.row.findIndex(x=>up(x).includes('CATEGORÍA'));
+    for(let k=idx+1;k<catRow.row.length;k++){ const v=norm(catRow.row[k]); if(v && v!=='.'){categoria=v;break;} }
+  }
+
+  // ---- FLOTA ----
+  // La flota aparece en la hoja de detalle. Distintos formatos:
+  //  (a) etiqueta "FLOTA" con el valor en la celda de abajo
+  //  (b) etiqueta "PLAZA" (mal rotulada) con el valor de flota debajo, junto a "DETALLE DE SERVICIOS"
+  // Estrategia: lista de valores de flota conocidos; buscar cualquiera de ellos en las primeras filas del detalle.
+  const FLOTAS_CONOCIDAS = ['AEROPUERTO REGULAR','AEROPUERTO VAN','MEMBRESÍA DIURNA','MEMBRESIA DIURNA',
+    'MEMBRESÍA NOCTURNA','MEMBRESIA NOCTURNA','MEMBRESÍA URBANO','MEMBRESIA URBANO','URBANO','AEROLINEAS','AEROLÍNEAS',
+    'REGULAR URBANO','PLAZAS'];
+  // 1) buscar etiqueta FLOTA explícita (valor debajo)
+  for(let r=0;r<Math.min(6,detalle.length) && !flota;r++){
+    for(let c=0;c<(detalle[r]||[]).length;c++){
+      if(up(detalle[r][c])==='FLOTA'){
+        const v=(detalle[r+1]||[])[c];
+        if(v!==''&&v!==undefined) flota=norm(v);
+        break;
+      }
+    }
+  }
+  // 2) buscar un valor de flota conocido directamente en las primeras filas del detalle
+  if(!flota){
+    outerFlota:
+    for(let r=0;r<Math.min(4,detalle.length);r++){
+      for(let c=0;c<(detalle[r]||[]).length;c++){
+        const val=up(detalle[r][c]);
+        if(val && FLOTAS_CONOCIDAS.includes(val)){
+          flota=norm(detalle[r][c]); break outerFlota;
+        }
+      }
+    }
+  }
+  // 3) valor debajo de "DETALLE DE SERVICIOS" (misma columna)
+  if(!flota){
+    outerDS:
+    for(let r=0;r<Math.min(4,detalle.length);r++){
+      for(let c=0;c<(detalle[r]||[]).length;c++){
+        if(up(detalle[r][c]).includes('DETALLE DE SERVICIOS')){
+          const v=norm((detalle[r]||[])[c+ (detalle[r].length>c+1?0:0)]); // misma fila por si acaso
+          // el valor de flota suele estar a la derecha en la misma fila
+          for(let k=1;k<(detalle[r]||[]).length;k++){
+            const cand=norm(detalle[r][k]);
+            if(cand && up(cand)!=='DETALLE DE SERVICIOS' && up(cand)!=='PLAZA'){ flota=cand; break outerDS; }
+          }
+        }
+      }
+    }
+  }
+  // 4) fallback: etiqueta FLOTA en el resumen
+  if(!flota){
+    const fRow=findText(resumen,'FLOTA');
+    if(fRow){ const i=fRow.row.findIndex(x=>up(x)==='FLOTA'); for(let k=i+1;k<fRow.row.length;k++){const v=norm(fRow.row[k]); if(v){flota=v;break;}} }
+  }
+  // Salvaguarda: la flota NUNCA debe ser el texto largo de fechas de pago (Q31) ni una frase larga
+  if(flota && (flota.length>40 || up(flota).includes('FECHA DE PAGO') || up(flota).includes('DSCTO'))){
+    flota='';
+  }
+
+  // ---- TEXTO PEX semanas pasadas (Q31): "DSCTO. DE PEX LIQ. # 22 ... # 23 ... # 24" ----
+  for(let r=0;r<resumen.length && !pexSemanasTexto;r++){
+    for(let c=0;c<(resumen[r]||[]).length;c++){
+      const t=norm(resumen[r][c]);
+      if(up(t).includes('DSCTO') && up(t).includes('PEX') && /LIQ/i.test(t)){
+        pexSemanasTexto=t; break;
+      }
+    }
+  }
+
+  // ---- PARSEAR DETALLE DE SERVICIOS ----
+  // localizar fila de cabecera (contiene 'N° Servicio' y 'Tipo de pago')
+  let hRow=-1, colMap={};
+  for(let r=0;r<detalle.length;r++){
+    const row = detalle[r].map(up);
+    if(row.some(x=>x.includes('N° SERVICIO')||x.includes('N°SERVICIO')) && row.some(x=>x.includes('TIPO DE PAGO'))){
+      hRow=r;
+      detalle[r].forEach((h,c)=>{
+        const H=up(h);
+        if(H.includes('N° SERVICIO')||H.includes('N°SERVICIO')) colMap.servicio=c;
+        else if(H==='FECHA') colMap.fecha=c;
+        else if(H==='CLIENTE') colMap.cliente=c;
+        else if(H.includes('UNIDAD')) colMap.unidad=c;
+        else if(H.includes('MEDIO DE PAGO')) colMap.medio=c;
+        else if(H.includes('TIPO DE PAGO')) colMap.tipo=c;
+        else if(H==='PEAJE') colMap.peaje=c;
+        else if(H.includes('MONTO A LIQUIDAR')) colMap.liquidar=c;
+        else if(H.includes('TOTAL SERVICIO')) colMap.total=c;
+        else if(H.includes('COMISIÓN AEROPUERTO')) colMap.comApto=c;
+        else if(H.includes('COMISIÓN')) colMap.comision=c;
+        else if(H.includes('TOTAL PARA CONDUCTOR')) colMap.conductor=c;
+      });
+      break;
+    }
+  }
+  SERVICES=[];
+  if(hRow>=0){
+    for(let r=hRow+1;r<detalle.length;r++){
+      const row = detalle[r];
+      const svc = norm(row[colMap.servicio]);
+      const cliente = norm(row[colMap.cliente]);
+      // fila válida: tiene N° de servicio (numérico o alfanumérico con guion) y cliente.
+      if(!svc || !cliente) continue;
+      if(/^(TOTAL|SUBTOTAL|RESUMEN)/i.test(svc) || /^(TOTAL|SUBTOTAL)/i.test(cliente)) continue;
+      const totalNum = N(row[colMap.total]);
+      const liqNum = N(row[colMap.liquidar]);
+      const condNum = N(row[colMap.conductor]);
+      if(totalNum===0 && liqNum===0 && condNum===0) continue;
+      let fecha = row[colMap.fecha];
+      if(fecha instanceof Date) fecha = fecha.toLocaleDateString('es-PE');
+      else if(typeof fecha==='number'){ const d=XLSX.SSF.parse_date_code(fecha); if(d) fecha=`${String(d.d).padStart(2,'0')}/${String(d.m).padStart(2,'0')}/${d.y}`; }
+      else fecha = norm(fecha).split(' ')[0];
+      const esPart = up(cliente).includes('PARTICULAR');
+      SERVICES.push({
+        n: SERVICES.length+1,
+        servicio: svc,
+        fecha,
+        cliente,
+        unidad: norm(row[colMap.unidad]),
+        medio: norm(row[colMap.medio]),
+        tipo: norm(row[colMap.tipo]),
+        peaje: N(row[colMap.peaje]),
+        liquidar: N(row[colMap.liquidar]),
+        total: N(row[colMap.total]),
+        conductor: N(row[colMap.conductor]),
+        razon: esPart?'part':'corp'
+      });
+    }
+  }
+
+  // ---- DESCUENTOS (lee el bloque dinámicamente, columna label + monto contigua) ----
+  function readBlock(startLabel, totalLabel){
+    const items=[]; let total=0, totalFound=false;
+    // localizar la celda del encabezado del bloque
+    let sr=-1, sc=-1;
+    for(let r=0;r<resumen.length && sr<0;r++)
+      for(let c=0;c<(resumen[r]||[]).length;c++)
+        if(up(resumen[r][c])===up(startLabel)){ sr=r; sc=c; break; }
+    if(sr<0) return {items,total};
+    // recorrer filas hacia abajo en la misma columna de labels
+    for(let r=sr+1;r<resumen.length;r++){
+      const lab=norm(resumen[r][sc]);
+      if(!lab) continue;
+      // el monto está en la columna contigua con valor numérico (sc+1)
+      let val=null;
+      for(let k=1;k<=2;k++){ const v=resumen[r][sc+k]; if(v!==''&&v!==undefined&&!isNaN(parseFloat(v))){val=N(v);break;} }
+      if(up(lab)===up(totalLabel)){ total = val||0; totalFound=true; break; }
+      if(val!==null && val>0) items.push({label:lab,val});
+      // cortar si encontramos otro encabezado conocido
+      if(up(lab)==='REPOSICIONES'||up(lab).includes('MONTO TOTAL')) break;
+    }
+    if(!totalFound) total = items.reduce((a,b)=>a+b.val,0);
+    return {items,total};
+  }
+  const descBlock = readBlock('Descuentos','Total Descuentos');
+  const descuentos = descBlock.items;
+  const totDesc = descBlock.total;
+
+  // ---- REPOSICIONES (bloque dinámico) ----
+  const repoBlock = readBlock('Reposiciones','Total Reposiciones');
+  const reposiciones = repoBlock.items;
+  const totRepo = repoBlock.total;
+
+  // ---- MONTOS A DEPOSITAR (de la hoja resumen, fuente de verdad) ----
+  const depoCorp=(findLabel(resumen,'MONTO TOTAL A DEPOSITAR') ? null : null);
+  // buscar las 3 etiquetas específicas
+  function depoBy(tag){
+    for(let r=0;r<resumen.length;r++) for(let c=0;c<(resumen[r]||[]).length;c++){
+      if(up(resumen[r][c]).includes('MONTO TOTAL A DEPOSITAR') && up(resumen[r][c]).includes(tag)){
+        // valor está debajo
+        for(let k=1;k<=3;k++){ const v=(resumen[r+k]||[])[c]; if(v!==''&&v!==undefined&&!isNaN(parseFloat(v))) return N(v); }
+      }
+    }
+    return null;
+  }
+  const depCorp = depoBy('CORPORATIVO');
+  const depPart = depoBy('PARTICULAR');
+  const depPeaje = depoBy('PEAJE');
+
+  // ---- BLOQUE CENTRAL: Total servicios y Monto para el conductor por tipo ----
+  // Estructura: una fila "Total Servicios X" seguida de "Monto para el conductor"
+  function blockPair(startContains){
+    for(let r=0;r<resumen.length;r++){
+      for(let c=0;c<(resumen[r]||[]).length;c++){
+        if(up(resumen[r][c]).includes(up(startContains))){
+          // total a la derecha
+          let total=0;
+          for(let k=1;k<=6;k++){const v=resumen[r][c+k];if(v!==''&&!isNaN(parseFloat(v))){total=N(v);break;}}
+          // monto para el conductor en filas siguientes (misma col)
+          let cond=0;
+          for(let rr=r+1;rr<Math.min(r+4,resumen.length);rr++){
+            if(up(resumen[rr][c]).includes('MONTO PARA EL CONDUCTOR')){
+              for(let k=1;k<=6;k++){const v=resumen[rr][c+k];if(v!==''&&!isNaN(parseFloat(v))){cond=N(v);break;}}
+              break;
+            }
+          }
+          return {total,cond};
+        }
+      }
+    }
+    return {total:0,cond:0};
+  }
+  const bCorp = blockPair('Total Servicios Corporativos');
+  const bPart = blockPair('Total Servicios Particulares');
+  const bEfe  = blockPair('Total Servicios en Efectivo');
+
+  // ---- BLOQUE "MONTOS A FACTURAR" (columnas V/W/X) ----
+  // Sub-bloque corporativo: ancla "Total Servicios" + "Total para facturar" (primera ocurrencia)
+  // Sub-bloque particular: segunda ocurrencia
+  // Localizar las dos cabeceras "Total para facturar"
+  function findAll(text){
+    const hits=[];
+    for(let r=0;r<resumen.length;r++)for(let c=0;c<(resumen[r]||[]).length;c++)
+      if(up(resumen[r][c])===up(text)) hits.push([r,c]);
+    return hits;
+  }
+  const factHeaders = findAll('Total para facturar'); // [corp, particular]
+  // columna de etiquetas en este bloque (V) suele ser headerCol-1; montos en W=headerCol-1, facturar en X=headerCol
+  // Recaudación BRUTA por medio (columna W, "Total Servicios" del sub-bloque), no la comisionada (X)
+  function readFactSubblock(headerRC){
+    if(!headerRC) return {rows:[], facturar:0};
+    const [hr,hc]=headerRC; // hc = columna de "Total para facturar" (X)
+    const colFact=hc;        // X (Total para facturar / con comisión)
+    const colBruto=hc-1;     // W (Total Servicios / bruto sin comisión)
+    const colLabel=hc-2;     // V (etiqueta del medio)
+    // en vez de lista blanca, excluimos lo que NO es un medio de pago (subtotales, notas, excedentes)
+    const noEsMedio = lab => {
+      const L=up(lab);
+      if(!L) return true;
+      if(!isNaN(parseFloat(lab))) return true;                 // número (subtotal)
+      if(L.length>30) return true;                             // texto largo (notas, "Emitir factura...")
+      if(L.includes('EXCEDENTE')) return true;                 // "Excedente svc origen aeropuerto"
+      if(L.includes('EMITIR')||L.includes('FACTURA')||L.includes('RUC')) return true;
+      if(L.includes('TOTAL')) return true;
+      return false;
+    };
+    const rows=[];
+    let facturar=0;
+    for(let r=hr+1;r<Math.min(hr+12,resumen.length);r++){
+      const lab=norm(resumen[r][colLabel]);
+      const bruto=N(resumen[r][colBruto]);
+      const fact=N(resumen[r][colFact]);
+      // detener si el label es numérico (subtotal V11/V26) tras haber leído filas
+      if(lab && !isNaN(parseFloat(lab)) && rows.length){ break; }
+      if(lab && !noEsMedio(lab)){
+        rows.push({label:lab, bruto, fact});
+      }
+      if(!lab && (bruto||fact)){ facturar=fact; }
+      if(!lab && !bruto && !fact && rows.length) break;
+    }
+    return {rows, facturar};
+  }
+  const factCorpBlock = readFactSubblock(factHeaders[0]);
+  const factPartBlock = readFactSubblock(factHeaders[1]);
+
+  // V11 (facturación corporativa) y V26 (facturación particular):
+  // están en la columna V (colLabel), unas filas debajo del sub-bloque, como subtotal solitario.
+  function subtotalBelow(headerRC, maxDown=10){
+    if(!headerRC) return 0;
+    const [hr,hc]=headerRC;
+    const colLabel=hc-2; // V
+    let last=0;
+    for(let r=hr+1;r<Math.min(hr+maxDown,resumen.length);r++){
+      const v=resumen[r][colLabel];
+      if(v!==''&&v!==undefined&&!isNaN(parseFloat(v))) last=N(v); // último número en columna V del bloque
+    }
+    return last;
+  }
+  const facturaCorp = subtotalBelow(factHeaders[0]);  // V11
+  const facturaPart = subtotalBelow(factHeaders[1]);  // V26
+
+  // Recaudación bruta del conductor por medio (columna W del sub-bloque particular)
+  // W19=Efectivo, W23=Yape, W21=Visa, W20=POS VISA, W22=Visa Link
+  function brutoByMedio(medio){
+    const row = factPartBlock.rows.find(x=>up(x.label)===up(medio));
+    return row ? row.bruto : 0;
+  }
+  const brutoEfectivo = brutoByMedio('Efectivo');
+  const brutoYape     = brutoByMedio('Yape');
+  const brutoVisa     = brutoByMedio('Visa');
+  const brutoPosVisa  = brutoByMedio('POS VISA');
+  const brutoVisaLink = brutoByMedio('Visa Link');
+  // total recaudado en mano por el conductor (efectivo + yape), montos BRUTOS (W19+W23)
+  const recaudadoConductor = brutoEfectivo + brutoYape;
+
+  // ---- LIQUIDACIONES PASADAS no cobradas (se suman a esta liquidación) ----
+  // N40 = corporativos (Proacción), Q40 = particulares (Transportes)
+  function pasadasBy(tag){
+    for(let r=0;r<resumen.length;r++)for(let c=0;c<(resumen[r]||[]).length;c++){
+      const t=up(resumen[r][c]);
+      if(t.includes('MONTOS DE LIQUIDACIONES PASADAS') && t.includes(tag)){
+        // valor en la fila siguiente, misma columna
+        for(let rr=r+1;rr<Math.min(r+3,resumen.length);rr++){
+          const v=resumen[rr][c]; if(v!==''&&v!==undefined&&!isNaN(parseFloat(v))) return N(v);
+        }
+      }
+    }
+    return 0;
+  }
+  const pasadasCorp = pasadasBy('CORPORATIVO') || pasadasBy('PROACCION');
+  const pasadasPart = pasadasBy('PARTICULAR') || pasadasBy('TRANSPORTES');
+
+  // ---- Producción ----
+  const prod=(findLabel(resumen,'Producción total')||{}).val||0;
+  const ticket=(findLabel(resumen,'Ticket promedio')||{}).val||0;
+  const cantSvc=(findLabel(resumen,'Cantidad de Servicios')||{}).val||SERVICES.length;
+
+  // limpiar categoría placeholder
+  if(categoria==='.'||categoria==='-') categoria='';
+
+  return {
+    meta:{nombre,movil,semana,categoria,flota,pexSemanasTexto},
+    services:SERVICES,
+    descuentos,totDesc,
+    reposiciones,totRepo,
+    deposito:{corp:depCorp,part:depPart,peaje:depPeaje},
+    central:{corp:bCorp,part:bPart,efe:bEfe},
+    factura:{corp:facturaCorp, part:facturaPart},
+    factRows:{corp:factCorpBlock.rows, part:factPartBlock.rows},
+    bruto:{efectivo:brutoEfectivo, yape:brutoYape, visa:brutoVisa, posVisa:brutoPosVisa, visaLink:brutoVisaLink, recaudadoConductor},
+    pasadas:{corp:pasadasCorp, part:pasadasPart},
+    produccion:{prod,ticket,cantSvc}
+  };
+}
+
+// =================== RENDER ===================
+function render(D){
+  // ---- meta bar ----
+  document.getElementById('metaBar').innerHTML = `
+    <span class="who">${D.meta.nombre||'Conductor'}</span>
+    <span class="chip">Móvil ${D.meta.movil||'—'}</span>
+    ${D.meta.categoria?`<span class="chip">Cat. ${D.meta.categoria}</span>`:''}
+    <span class="sp"></span>
+    <span class="chip">${D.meta.semana||''}</span>`;
+
+  // ============ LÓGICA FINANCIERA (según reglas de negocio) ============
+  // Montos "para el conductor" comisionados (del bloque central del resumen)
+  const condCorp = D.central.corp.cond;   // monto conductor corporativo (% aplicado)
+  const condPart = D.central.part.cond;   // monto conductor particular
+  const cobradoPorEmpresa = condCorp + condPart;
+
+  // Facturación por razón social (V11 corp / V26 part) — total facturable
+  const facturaCorp = D.factura.corp;     // V11
+  const facturaPart = D.factura.part;     // V26
+
+  // Recaudación BRUTA en mano del conductor (W19 efectivo + W23 yape, SIN comisión)
+  const recaudadoConductor = D.bruto.recaudadoConductor;
+
+  // Liquidaciones pasadas no cobradas (se suman)
+  const pasadasCorp = D.pasadas.corp;     // N40
+  const pasadasPart = D.pasadas.part;     // Q40
+  const pasadasTotal = pasadasCorp + pasadasPart;
+
+  // Descuentos / reposiciones
+  const totDesc = D.totDesc;
+  const totRepo = D.totRepo;
+
+  // ---- MONTO A DEPOSITAR por razón social ----
+  // Corporativos = facturación corp (V11) − descuentos + reposiciones + pasadas corp
+  // Particulares = facturación part (V26) − recaudado por conductor (W19+W23) + pasadas part
+  // Preferimos el valor oficial de la hoja si existe; si no, lo calculamos.
+  const depCorpOficial = D.deposito.corp, depPartOficial = D.deposito.part;
+  const depCorpCalc = facturaCorp - totDesc + totRepo + pasadasCorp;
+  const depPartCalc = facturaPart - recaudadoConductor + pasadasPart;
+  // valores "crudos" (pueden ser negativos)
+  const depoCorpRaw = (depCorpOficial!=null && depCorpOficial!==0) ? N(depCorpOficial) : depCorpCalc;
+  const depoPartRaw = (depPartOficial!=null && depPartOficial!==0) ? N(depPartOficial) : depPartCalc;
+  const depPeajeRaw = N(D.deposito.peaje);
+  // REGLA: un depósito negativo no se descuenta, cuenta como 0 para el total a depositar
+  const depoCorp = Math.max(0, depoCorpRaw);
+  const depoPart = Math.max(0, depoPartRaw);
+  const depPeajeV = Math.max(0, depPeajeRaw);
+  // banderas para mostrar el detalle del negativo
+  const corpNeg = depoCorpRaw < 0, partNeg = depoPartRaw < 0, peajeNeg = depPeajeRaw < 0;
+  const depoTotal = depoCorp + depoPart + depPeajeV;
+
+  // ---- agregaciones por medio de pago (del detalle, para conteos) ----
+  const byMedio={};
+  D.services.forEach(s=>{
+    const k=s.medio||'Otro';
+    byMedio[k]=byMedio[k]||{cnt:0,conductor:0,total:0,peaje:0};
+    byMedio[k].cnt++; byMedio[k].conductor+=s.conductor; byMedio[k].total+=s.total; byMedio[k].peaje+=s.peaje;
+  });
+  const yaCobrado=['EFECTIVO','YAPE'];
+
+  // ---- KPIs ----
+  const subParts = [`Proacción ${F(depoCorp)}`, `Transportes ${F(depoPart)}`];
+  if(depPeajeV) subParts.push(`Peajes ${F(depPeajeV)}`);
+  const subCorp = subParts.join(' · ');
+  document.getElementById('kpis').innerHTML = `
+    <div class="kpi prod">
+      <div class="lab">Producción total</div>
+      <div class="val">${F(D.produccion.prod)}</div>
+      <div class="sub">${Math.round(D.produccion.cantSvc)} servicios · ticket ${F(D.produccion.ticket)}</div>
+    </div>
+    <div class="kpi depo">
+      <span class="tag g">SE DEPOSITA</span>
+      <div class="lab">Monto a depositar</div>
+      <div class="val">${F(depoTotal)}</div>
+      <div class="sub">${subCorp}</div>
+    </div>
+    <div class="kpi info">
+      <span class="tag m">YA COBRADO</span>
+      <div class="lab">Recaudado por el conductor</div>
+      <div class="val">${F(recaudadoConductor)}</div>
+      <div class="sub">Efectivo y Yape · informativo, no se deposita</div>
+    </div>
+    <div class="kpi desc">
+      <div class="lab">Total descuentos</div>
+      <div class="val">${F(totDesc)}</div>
+      <div class="sub">${D.descuentos.length} concepto(s) aplicado(s)</div>
+    </div>`;
+
+  // ---- desglose del depósito por razón social ----
+  const peajeCard = depPeajeV ? `
+    <div class="kpi" style="border-left:4px solid var(--teal)">
+      <div class="lab">Peajes (devolución)</div>
+      <div class="val" style="color:var(--teal-d)">${F(depPeajeV)}</div>
+      <div class="sub">Peajes recaudados por Directo que se devuelven al conductor</div>
+    </div>` : '';
+  const depoBreakEl = document.getElementById('depoBreak');
+  depoBreakEl.style.gridTemplateColumns = depPeajeV ? 'repeat(4,1fr)' : 'repeat(3,1fr)';
+  depoBreakEl.innerHTML = `
+    <div class="kpi" style="border-left:4px solid var(--blue)">
+      <div class="lab">Proacción (Corporativos)</div>
+      <div class="val" style="color:var(--blue)">${F(depoCorp)}</div>
+      <div class="sub">Factura ${F(facturaCorp)} − desc. ${F(totDesc)} + repo. ${F(totRepo)}${pasadasCorp?` + pasadas ${F(pasadasCorp)}`:''}${corpNeg?` → cálculo dio ${F(depoCorpRaw)}, no se descuenta (cuenta como 0)`:''}</div>
+    </div>
+    <div class="kpi" style="border-left:4px solid #7C3AED">
+      <div class="lab">Transportes (Particulares)</div>
+      <div class="val" style="color:#7C3AED">${F(depoPart)}</div>
+      <div class="sub">Factura ${F(facturaPart)} − ya cobrado ${F(recaudadoConductor)}${pasadasPart?` + pasadas ${F(pasadasPart)}`:''}${partNeg?` → cálculo dio ${F(depoPartRaw)}, no se descuenta (cuenta como 0)`:''}</div>
+    </div>
+    ${peajeCard}
+    <div class="kpi depo">
+      <span class="tag g">TOTAL</span>
+      <div class="lab">Total a depositar</div>
+      <div class="val">${F(depoTotal)}</div>
+      <div class="sub">Proacción + Transportes${depPeajeV?' + Peajes':''}</div>
+    </div>`;
+
+  // ---- detalle por tipo de pago: TABLA (producido W / a cobrar X / cobrado) ----
+  const pagoClass = m => {
+    const M=up(m);
+    if(M==='EMPRESA')return'pc-emp'; if(M.includes('VISA'))return'pc-vis';
+    if(M==='EFECTIVO')return'pc-efe'; if(M==='YAPE')return'pc-yap'; return'pc-oth';
+  };
+  // unir filas de ambos sub-bloques del resumen (corp + part)
+  const allFactRows = [...(D.factRows.corp||[]), ...(D.factRows.part||[])];
+  // medios que el conductor cobra en mano
+  const enMano = m => yaCobrado.includes(up(m));
+  // categoría de cada medio para ordenar: Crédito → Particular → Efectivo
+  const categoriaMedio = m => {
+    const M=up(m);
+    // Crédito: cobrados por Directo a empresas (Empresa, Ticket, E-Vale)
+    if(M==='EMPRESA'||M==='TICKET'||M.includes('VALE')) return 0;
+    // Efectivo: el conductor ya lo tiene en mano
+    if(M==='EFECTIVO'||M==='YAPE') return 2;
+    // Particular: medios electrónicos del pasajero (Visa, POS Visa, Visa Link, Abono)
+    if(M.includes('VISA')||M==='ABONO'||M==='POS') return 1;
+    return 1; // por defecto, tratar como particular
+  };
+  // ---- construir filas fusionando RESUMEN (montos comisionados) + DETALLE (medios y producido) ----
+  // normaliza el nombre de un medio a una clave única (mayúsculas, sin espacios extra)
+  const medioKey = m => up(m).replace(/\s+/g,' ').trim();
+  // nombre "bonito" para mostrar (capitaliza)
+  const medioNombre = m => {
+    const s=String(m).trim();
+    // mantener acrónimos conocidos en mayúsculas
+    if(['VISA','POS VISA','TICKET','E-VALE','YAPE'].includes(up(s))) {
+      // formato amigable
+      const map={'VISA':'Visa','POS VISA':'POS Visa','TICKET':'Ticket','E-VALE':'E-Vale','YAPE':'Yape'};
+      return map[up(s)]||s;
+    }
+    return s.charAt(0).toUpperCase()+s.slice(1).toLowerCase();
+  };
+  // 1) agrupar el detalle por medio (clave normalizada)
+  const detByMedio={};
+  D.services.forEach(s=>{
+    const k=medioKey(s.medio||'Otro');
+    detByMedio[k]=detByMedio[k]||{producido:0, cond:0, cnt:0, nombre:s.medio||'Otro'};
+    detByMedio[k].producido+=N(s.total);
+    detByMedio[k].cond+=N(s.conductor);
+    detByMedio[k].cnt++;
+  });
+  // 2) índice del resumen por medio (clave normalizada)
+  const resByMedio={};
+  allFactRows.forEach(r=>{ if(r.label) resByMedio[medioKey(r.label)]={bruto:r.bruto, fact:r.fact, nombre:r.label}; });
+
+  // 3) universo de medios (claves normalizadas únicas)
+  const universoMedios=new Set([...Object.keys(detByMedio), ...Object.keys(resByMedio)]);
+
+  let payRows=[...universoMedios].map(key=>{
+    const det=detByMedio[key]||null;
+    const res=resByMedio[key]||null;
+    const nombre = medioNombre((det&&det.nombre)||(res&&res.nombre)||key);
+    const producido = det ? det.producido : (res?res.bruto:0);
+    let aCobrar = res ? res.fact : (det?det.cond:0);
+    const mano = enMano(key);
+    return {
+      medio:nombre,
+      producido,
+      aCobrar: mano ? 0 : aCobrar,
+      cobrado: mano ? producido : 0,
+      cnt: det?det.cnt:0,
+      cat: categoriaMedio(key)
+    };
+  });
+  // quitar medios totalmente vacíos
+  payRows=payRows.filter(r=>r.producido>0 || r.aCobrar>0 || r.cobrado>0 || r.cnt>0);
+  // ordenar: Crédito → Particular → Efectivo
+  payRows.sort((a,b)=>a.cat-b.cat);
+  // totales
+  const tProd=payRows.reduce((a,b)=>a+b.producido,0);
+  const tCobrar=payRows.reduce((a,b)=>a+b.aCobrar,0);
+  const tCobrado=payRows.reduce((a,b)=>a+b.cobrado,0);
+
+  let pagosHtml=`<table class="paytable">
+    <thead><tr>
+      <th>Tipo de pago</th>
+      <th class="num">Monto producido</th>
+      <th class="num">Monto a cobrar</th>
+      <th class="num">Monto cobrado</th>
+    </tr></thead><tbody>`;
+  payRows.forEach(r=>{
+    pagosHtml+=`<tr>
+      <td><span class="paychip ${pagoClass(r.medio)}">${r.medio}</span></td>
+      <td class="num">${F(r.producido)}</td>
+      <td class="num ${r.aCobrar>0?'pos':'zero'}">${F(r.aCobrar)}</td>
+      <td class="num ${r.cobrado>0?'amber':'zero'}">${F(r.cobrado)}</td>
+    </tr>`;
+  });
+  pagosHtml+=`<tr class="trtot">
+      <td>Total</td>
+      <td class="num">${F(tProd)}</td>
+      <td class="num pos">${F(tCobrar)}</td>
+      <td class="num amber">${F(tCobrado)}</td>
+    </tr></tbody></table>`;
+  document.getElementById('pagos').innerHTML=pagosHtml;
+  document.getElementById('pagosExplain').innerHTML=
+    `<b>Monto producido</b>: lo que se movió en cada medio (sin comisión). `+
+    `<b>Monto a cobrar</b>: lo que la empresa le deposita al conductor. `+
+    `<b>Monto cobrado</b>: lo que el conductor ya recibió en mano (efectivo y yape).`;
+
+  // ---- montos a facturar: V11 (corp) y V26 (part) ----
+  const corpSvc=D.services.filter(s=>s.razon==='corp');
+  const partSvc=D.services.filter(s=>s.razon==='part');
+  // V11 y V26 son la fuente oficial; solo usar fallback del detalle si la celda no existe (undefined)
+  const factCorpShow = (facturaCorp!=null) ? facturaCorp : corpSvc.reduce((a,b)=>a+b.total,0);
+  const factPartShow = (facturaPart!=null) ? facturaPart : partSvc.reduce((a,b)=>a+b.total,0);
+  document.getElementById('factura').innerHTML=`
+    <div class="fact corp">
+      <div class="rs">Razón social 1 · Proacción</div>
+      <div class="nm">Servicios Corporativos</div>
+      <div class="amt">${F(factCorpShow)}</div>
+      <div class="cnt">${corpSvc.length} servicio(s) a crédito</div>
+    </div>
+    <div class="fact part">
+      <div class="rs">Razón social 2 · Transportes</div>
+      <div class="nm">Servicios Particulares</div>
+      <div class="amt">${F(factPartShow)}</div>
+      <div class="cnt">${partSvc.length} servicio(s) particular(es)</div>
+    </div>`;
+  document.getElementById('factExplain').innerHTML=
+    `El conductor factura por separado: servicios corporativos en <b>Proacción</b> y particulares en <b>Transportes</b>. `+
+    (pasadasTotal>0?`Incluye liquidaciones pasadas no cobradas: Proacción ${F(pasadasCorp)}, Transportes ${F(pasadasPart)}.`:'');
+
+  // ---- descuentos (con desplegables PEX) ----
+  renderDescuentos();
+
+  // ---- reposiciones ----
+  let rHtml='';
+  if(D.reposiciones.length){
+    D.reposiciones.forEach(r=>{
+      rHtml+=`<div class="row"><div class="l">${r.label}</div><div class="v pos">+ ${F(r.val)}</div></div>`;
+    });
+    rHtml+=`<div class="row tot"><div class="l">Total reposiciones</div><div class="v pos">+ ${F(D.totRepo)}</div></div>`;
+  } else {
+    rHtml=`<div class="row"><div class="l" style="color:var(--muted)">Sin reposiciones esta semana</div><div class="v zero">${F(0)}</div></div>`;
+  }
+  document.getElementById('reposiciones').innerHTML=rHtml;
+
+  // ---- filtro medios ----
+  const fPago=document.getElementById('fPago');
+  const mediosUnicos=[...new Set(D.services.map(s=>s.medio).filter(Boolean))];
+  fPago.innerHTML='<option value="">Todos los medios de pago</option>'+
+    mediosUnicos.map(m=>`<option value="${m}">${m}</option>`).join('');
+
+  renderTable();
+}
+
+function renderTable(){
+  const fPago=document.getElementById('fPago').value;
+  const fRazon=document.getElementById('fRazon').value;
+  const fCli=up(document.getElementById('fCliente').value);
+  let rows=SERVICES.filter(s=>
+    (!fPago||s.medio===fPago)&&
+    (!fRazon||s.razon===fRazon)&&
+    (!fCli||up(s.cliente).includes(fCli))
+  );
+  rows.sort((a,b)=>{
+    let x=a[SORT.k],y=b[SORT.k];
+    if(typeof x==='string'){x=up(x);y=up(y);}
+    return x<y?-1*SORT.dir:x>y?1*SORT.dir:0;
+  });
+  const pc=m=>{const M=up(m);return M==='EMPRESA'?'pc-emp':M==='VISA'?'pc-vis':M==='EFECTIVO'?'pc-efe':M==='YAPE'?'pc-yap':'pc-oth';};
+  document.querySelector('#detTable tbody').innerHTML=rows.map(s=>`
+    <tr>
+      <td>${s.n}</td>
+      <td>${s.servicio}</td>
+      <td>${s.fecha}</td>
+      <td>${s.cliente}</td>
+      <td><span class="pill ${s.razon}">${s.razon==='corp'?'Corp':'Part'}</span></td>
+      <td><span class="paychip ${pc(s.medio)}">${s.medio}</span></td>
+      <td class="num">${s.peaje?F(s.peaje):'—'}</td>
+      <td class="num">${F(s.total)}</td>
+      <td class="num"><b>${F(s.conductor)}</b></td>
+    </tr>`).join('');
+  const tc=rows.reduce((a,b)=>a+b.conductor,0);
+  document.getElementById('fCount').textContent=`${rows.length} servicio(s) · ${F(tc)} para el conductor`;
+}
+
+// =================== PEX ===================
+// Detecta flota aeropuerto desde la liquidación (Q2)
+const FLOTAS_AEROPUERTO = ['AEROPUERTO REGULAR','AEROPUERTO VAN','MEMBRESÍA DIURNA','MEMBRESIA DIURNA','MEMBRESÍA NOCTURNA','MEMBRESIA NOCTURNA'];
+function esAeropuerto(flota){
+  const F=up(flota);
+  return FLOTAS_AEROPUERTO.some(x=>F===x || F.includes(x)) || (F.includes('AEROPUERTO') && !F.includes('NO AEROPUERTO'));
+}
+
+// Extrae los números de semana mencionados en el texto Q31
+function semanasEnTexto(txt){
+  if(!txt) return [];
+  const nums=[...txt.matchAll(/#\s*(\d{1,3})/g)].map(m=>parseInt(m[1],10));
+  return [...new Set(nums)];
+}
+
+// Detecta la hoja de validación por columnas (MOVIL+DETALLE+OBSV+IMPORTE+PLAZA)
+function findValidationSheet(wb){
+  for(const n of wb.SheetNames){
+    const grid=XLSX.utils.sheet_to_json(wb.Sheets[n],{header:1,defval:''});
+    for(let r=0;r<Math.min(3,grid.length);r++){
+      const row=grid[r].map(up);
+      const hasMovil=row.some(x=>x==='MOVIL');
+      const hasDet=row.some(x=>x==='DETALLE');
+      const hasImp=row.some(x=>x==='IMPORTE');
+      const hasObsv=row.some(x=>x==='OBSV');
+      if(hasMovil && hasDet && hasImp && hasObsv) return {name:n, grid, headerRow:r};
+    }
+  }
+  return null;
+}
+
+// Detecta nº de semana desde el nombre del archivo
+function semanaDeNombre(fname){
+  const m=String(fname).match(/SEMANA[_\s-]*(\d{1,3})/i) || String(fname).match(/SEM[_\s-]*(\d{1,3})/i) || String(fname).match(/(\d{1,3})(?=\.xlsx?$)/i);
+  return m?parseInt(m[1],10):null;
+}
+
+// Procesa un archivo PEX: extrae TODAS las líneas (todos los móviles) para poder re-filtrar luego
+function processPexFile(wb, fname){
+  const vs=findValidationSheet(wb);
+  if(!vs) return {error:'No se encontró hoja de validación (columnas MOVIL, DETALLE, OBSV, IMPORTE, PLAZA).', fname};
+  const {grid, headerRow}=vs;
+  const semana=semanaDeNombre(fname);
+  // mapear columnas
+  const cm={};
+  grid[headerRow].forEach((h,c)=>{
+    const H=up(h);
+    if(H==='MOVIL')cm.movil=c; else if(H==='DETALLE')cm.detalle=c; else if(H==='OBSV')cm.obsv=c;
+    else if(H==='IMPORTE')cm.importe=c; else if(H==='PLAZA')cm.plaza=c;
+    else if(H.includes('FECHA'))cm.fecha=c; else if(H==='PLACA')cm.placa=c;
+  });
+  // extraer TODAS las líneas con su móvil (sin filtrar)
+  const allLines=[];
+  for(let r=headerRow+1;r<grid.length;r++){
+    const row=grid[r];
+    const movilRow=String(row[cm.movil]==null?'':row[cm.movil]).trim();
+    const detalle=norm(row[cm.detalle]);
+    const obsv=norm(row[cm.obsv]);
+    const importe=N(row[cm.importe]);
+    const plaza=norm(row[cm.plaza]);
+    let fecha=row[cm.fecha];
+    if(fecha instanceof Date) fecha=fecha.toLocaleDateString('es-PE');
+    else if(typeof fecha==='number'){const d=XLSX.SSF.parse_date_code(fecha); if(d)fecha=`${String(d.d).padStart(2,'0')}/${String(d.m).padStart(2,'0')}/${d.y}`;}
+    else fecha=norm(fecha).split(' ')[0];
+    if(!movilRow || (!detalle && !importe)) continue;
+    let tipo='normal';
+    const O=up(obsv);
+    if(O.includes('USO PERSONAL')) tipo='personal';
+    else if(O.includes('INCIDENCIA')) tipo='incidencia';
+    else if(O.includes('EFECTIVO')) tipo='efectivo';
+    allLines.push({movil:movilRow,detalle,obsv,importe,plaza,fecha,tipo,semana});
+  }
+  return { fname, semana, allLines };
+}
+
+// Filtra las líneas de un archivo PEX por móvil (se llama al renderizar, con el móvil de la liq actual)
+function filterPexByMovil(week, movil){
+  const lines=(week.allLines||[]).filter(l=>String(l.movil).trim()===String(movil).trim());
+  return { ...week, lines, nLines:lines.length };
+}
+
+// Refresca el aviso superior con las semanas esperadas según Q31
+function refreshPexHint(){
+  const hint=document.getElementById('pexHint');
+  const sub=document.getElementById('dropPexSub');
+  if(!LIQ){ hint.classList.remove('show'); return; }
+  const sems=semanasEnTexto(LIQ.meta.pexSemanasTexto);
+  const flotaTxt = LIQ.meta.flota ? `Flota: <b>${LIQ.meta.flota}</b> (${esAeropuerto(LIQ.meta.flota)?'aeropuerto':'no aeropuerto'})` : 'Flota no detectada';
+  if(sems.length){
+    hint.innerHTML=`Esta liquidación descuenta PEX de las semanas <b>${sems.join(', ')}</b>. Carga esos archivos para ver el detalle. &nbsp;·&nbsp; ${flotaTxt}`;
+    hint.classList.add('show');
+    sub.textContent=`Semanas esperadas según la liquidación: ${sems.join(', ')}`;
+  } else {
+    hint.innerHTML=`No se detectó texto de descuento PEX de semanas pasadas en esta liquidación. Puedes cargar archivos PEX igualmente. &nbsp;·&nbsp; ${flotaTxt}`;
+    hint.classList.add('show');
+  }
+}
+
+// Maneja la carga de uno o varios archivos PEX
+function handlePexFiles(files){
+  let pending=files.length;
+  Array.from(files).forEach(file=>{
+    const reader=new FileReader();
+    reader.onload=e=>{
+      try{
+        const wb=XLSX.read(new Uint8Array(e.target.result),{type:'array',cellDates:true});
+        const res=processPexFile(wb, file.name);
+        PEX_WEEKS=PEX_WEEKS.filter(w=>w.fname!==res.fname);
+        PEX_WEEKS.push(res);
+      }catch(ex){
+        PEX_WEEKS.push({fname:file.name, error:ex.message});
+        console.error(ex);
+      }
+      if(--pending===0){
+        PEX_WEEKS.sort((a,b)=>(a.semana||999)-(b.semana||999));
+        renderPex();
+      }
+    };
+    reader.readAsArrayBuffer(file);
+  });
+}
+
+// Identifica si una etiqueta de descuento es un concepto PEX
+function esConceptoPex(label){
+  const L=up(label);
+  if(!L.includes('PEX')) return false;
+  return true; // cualquier etiqueta con "PEX" es concepto PEX (Membresía PEX, Pex Personal, etc.)
+}
+
+// Renderiza "Descuentos aplicados": no-PEX como filas normales + sub-sección "Descuentos PEX"
+function renderDescuentos(){
+  if(!LIQ) return;
+  const D=LIQ;
+  const PC=PEX_COMPUTED;
+  const cont=document.getElementById('descuentos');
+  if(!cont) return;
+
+  // mapa: etiqueta de descuento PEX -> {lines, hint} para el desplegable
+  function pexDetailFor(label, monto){
+    if(!PC) return null;
+    const L=up(label);
+    if(L.includes('PEX PERSONAL') && !L.includes('ADICIONAL'))
+      return {lines:PC.personal, motivoCol:false, hint:`${PC.personal.length} peaje(s) de uso personal`};
+    if(L.includes('ADICIONAL') && L.includes('PERSONAL'))
+      return {lines:PC.personal, motivoCol:false, cargoCol:true, cargoUnit:0.30,
+        hint:`0.30 × ${PC.personal.length} peaje(s) personal(es)`};
+    if(L.includes('INCIDENCIA'))
+      return {lines:PC.incidenciaEfectivo, motivoCol:true,
+        hint:`Incidencia ${F(PC.sumaInci)} (${PC.incidencia.length}) + Efectivo ${F(PC.sumaEfe)} (${PC.efectivo.length})`};
+    if(L.includes('ADICIONAL') && L.includes('SERVICIO')){
+      const nLatam=PC.svcConPeaje.filter(s=>s.esLatam).length;
+      return {lines:PC.svcConPeaje, fromLiq:true,
+        hint:`0.30 × ${PC.svcCobrables.length} servicio(s) cobrable(s)${nLatam?` · ${nLatam} LATAM no cobran`:''}`};
+    }
+    if(L.includes('MEMBRES')) // Membresía PEX: 3.5 fijo, leído de la liquidación
+      return {lines:[], info:true, hint:`Cargo semanal fijo de ${F(monto)}`};
+    if(L.includes('STICKER')) // Sticker PEX: pago único por el sticker
+      return {lines:[], info:true, hint:`Pago por el sticker PEX`};
+    return {lines:[], info:true, hint:''};
+  }
+
+  // separar descuentos: PEX (monto>0) vs no-PEX (monto>0)
+  const pexDesc = D.descuentos.filter(d=>esConceptoPex(d.label) && d.val>0);
+  const otrosDesc = D.descuentos.filter(d=>!esConceptoPex(d.label) && d.val>0);
+
+  // mostrar/ocultar botón de PDF según haya conceptos PEX
+  const btnPdf=document.getElementById('btnPexPdf');
+  if(btnPdf) btnPdf.style.display = pexDesc.length ? 'inline-block' : 'none';
+
+  let dHtml='';
+  let idx=0;
+
+  // ---- descuentos NO-PEX (filas normales) ----
+  otrosDesc.forEach(d=>{
+    dHtml+=`<div class="drow"><div class="row">
+      <div class="l">${d.label}</div>
+      <div class="v neg">− ${F(d.val)}</div>
+    </div></div>`;
+  });
+
+  // ---- sub-sección DESCUENTOS PEX ----
+  if(pexDesc.length){
+    const totalPex=pexDesc.reduce((a,b)=>a+b.val,0);
+    dHtml+=`<div class="pexsub">
+      <div class="pexsub-head">
+        <span class="pexsub-title">🛣️ Descuentos PEX</span>
+        <span class="pexsub-total">− ${F(totalPex)}</span>
+      </div>
+      <div class="pexsub-body">`;
+    pexDesc.forEach(d=>{
+      const det=pexDetailFor(d.label, d.val);
+      const hasDetail = det && (det.lines.length>0 || det.fromLiq);
+      const rowId='dpex-'+(idx++);
+      dHtml+=`<div class="drow">
+        <div class="row" ${hasDetail?`data-toggle="${rowId}" style="cursor:pointer"`:''}>
+          <div class="l">${hasDetail?'<span class="caret">▸</span> ':''}${d.label}${det&&det.hint?`<span class="hint">${det.hint}</span>`:''}</div>
+          <div class="v neg">− ${F(d.val)}</div>
+        </div>`;
+      if(hasDetail){
+        dHtml+=`<div class="ddetail" id="${rowId}">${pexDetailTable(det)}</div>`;
+      }
+      dHtml+=`</div>`;
+    });
+    // aviso si hay PEX en liq pero sin archivos cargados
+    if(!PC){
+      dHtml+=`<div class="pexnote">💡 Carga los archivos PEX abajo para ver el detalle de peajes de cada concepto.</div>`;
+    }
+    dHtml+=`</div></div>`;
+  }
+
+  // ---- total ----
+  if(otrosDesc.length || pexDesc.length){
+    dHtml+=`<div class="row tot"><div class="l">Total descuentos</div><div class="v neg">− ${F(D.totDesc)}</div></div>`;
+  } else {
+    dHtml=`<div class="row"><div class="l" style="color:var(--muted)">Sin descuentos esta semana</div><div class="v zero">${F(0)}</div></div>`;
+  }
+  cont.innerHTML=dHtml;
+
+  // listeners de despliegue
+  cont.querySelectorAll('[data-toggle]').forEach(r=>{
+    r.addEventListener('click',()=>{
+      const d=document.getElementById(r.dataset.toggle);
+      const caret=r.querySelector('.caret');
+      const open=d.classList.toggle('show');
+      if(caret) caret.textContent=open?'▾':'▸';
+    });
+  });
+}
+
+// Construye la tabla de detalle de peajes para un concepto de descuento
+function pexDetailTable(det){
+  const PC=PEX_COMPUTED;
+  // conceptos informativos sin lista de peajes (Membresía PEX, Sticker PEX)
+  if(det.info && !det.fromLiq && (!det.lines || !det.lines.length)){
+    return '';
+  }
+  // adicional con servicio: viene de la liquidación (servicios con peaje)
+  if(det.fromLiq){
+    return `<table class="pexd"><thead><tr>
+      <th>N° Servicio</th><th>Fecha</th><th>Cliente</th><th class="num">Peaje</th><th class="num">Cargo</th>
+    </tr></thead><tbody>
+      ${det.lines.map(s=>`<tr ${s.esLatam?'style="opacity:.7"':''}>
+        <td>${s.servicio||'—'}</td><td>${s.fecha||'—'}</td>
+        <td>${s.cliente||'—'}${s.esLatam?' <span class="pexbadge pb-norm">LATAM · sin cargo</span>':''}</td>
+        <td class="num">${F(s.peaje)}</td>
+        <td class="num ${s.esLatam?'zero':''}">${F(s.cargo)}</td>
+      </tr>`).join('')}
+    </tbody></table>`;
+  }
+  // peajes desde PEX (personal / incidencia+efectivo)
+  if(!det.lines.length) return '<div class="pexna">Sin peajes registrados para este concepto.</div>';
+  const mw=PC.multiWeek;
+  return `<table class="pexd"><thead><tr>
+    ${mw?'<th>Sem</th>':''}<th>Fecha</th><th>Servicio</th>${det.motivoCol?'<th>Motivo</th>':''}<th>Plaza</th><th class="num">Importe</th>${det.cargoCol?'<th class="num">Cargo</th>':''}
+  </tr></thead><tbody>
+    ${det.lines.map(l=>`<tr>
+      ${mw?`<td>${l.semana||'—'}</td>`:''}
+      <td>${l.fecha||'—'}</td>
+      <td>${l.detalle||'—'}</td>
+      ${det.motivoCol?`<td>${motivoBadge(l.tipo)}</td>`:''}
+      <td>${l.plaza||'—'}</td>
+      <td class="num">${F(l.importe)}</td>
+      ${det.cargoCol?`<td class="num">${F(det.cargoUnit||0.30)}</td>`:''}
+    </tr>`).join('')}
+  </tbody></table>`;
+}
+function motivoBadge(tipo){
+  if(tipo==='incidencia') return '<span class="pexbadge pb-inc">Incidencia</span>';
+  if(tipo==='efectivo') return '<span class="pexbadge pb-efe">Efectivo</span>';
+  if(tipo==='personal') return '<span class="pexbadge pb-per">Personal</span>';
+  return '<span class="pexbadge pb-norm">Servicio</span>';
+}
+
+// Renderiza los descuentos PEX AGRUPADOS POR CONCEPTO
+function renderPex(){
+  const cont=document.getElementById('pexResult');
+  if(!PEX_WEEKS.length){ if(cont)cont.innerHTML=''; renderDescuentos(); return; }
+  const movil=LIQ?LIQ.meta.movil:'';
+  const aeropuerto=LIQ?esAeropuerto(LIQ.meta.flota):false;
+  // filtrar cada semana por el móvil de la liquidación ACTUAL (permite cambiar de conductor)
+  const weeksFiltered=PEX_WEEKS.map(w=>w.error?w:filterPexByMovil(w, movil));
+  const validWeeks=weeksFiltered.filter(w=>!w.error);
+  const errWeeks=weeksFiltered.filter(w=>w.error);
+
+  // juntar TODAS las líneas de todas las semanas
+  const allLines=[];
+  validWeeks.forEach(w=>w.lines.forEach(l=>allLines.push(l)));
+
+  // clasificar
+  const personal=allLines.filter(l=>l.tipo==='personal');
+  const incidencia=allLines.filter(l=>l.tipo==='incidencia');
+  const efectivo=allLines.filter(l=>l.tipo==='efectivo');
+  // FUSIÓN: pex incidencias = incidencia + efectivo (con motivo en cada línea)
+  const incidenciaEfectivo=[...incidencia,...efectivo];
+
+  // montos por concepto
+  const pexPersonal = personal.reduce((a,b)=>a+b.importe,0);
+  const adicPersonal = +(0.30*personal.length).toFixed(2);
+  const pexIncidencias = incidenciaEfectivo.reduce((a,b)=>a+b.importe,0);
+  const sumaInci = incidencia.reduce((a,b)=>a+b.importe,0);
+  const sumaEfe = efectivo.reduce((a,b)=>a+b.importe,0);
+
+  // adicional pex con servicio: 0.30 × filas de la LIQUIDACIÓN con peaje > 0 (no aeropuerto)
+  // REGLA: los servicios de "LATAM AIRE Y TIERRA" se muestran pero con cargo 0
+  const svcConPeajeAll = LIQ ? LIQ.services.filter(s=>N(s.peaje)>0).map(s=>{
+    const esLatam = up(s.cliente).includes('LATAM AIRE Y TIERRA');
+    return {...s, esLatam, cargo: esLatam?0:0.30};
+  }) : [];
+  const svcConPeaje = svcConPeajeAll;                       // todos (para el detalle)
+  const svcCobrables = svcConPeajeAll.filter(s=>!s.esLatam); // los que sí cobran
+  const adicConServicio = aeropuerto ? 0 : +(0.30*svcCobrables.length).toFixed(2);
+
+  // membresía: 3.5 × nº de semanas del periodo (de Q31), solo aeropuerto.
+  const semsQ31 = semanasEnTexto(LIQ?LIQ.meta.pexSemanasTexto:'');
+  const nSemMembresia = semsQ31.length || validWeeks.length || 0;
+  const membresia = aeropuerto ? +(3.5*nSemMembresia).toFixed(2) : 0;
+
+  const grand = pexPersonal+adicPersonal+pexIncidencias+adicConServicio+membresia;
+
+  // guardar el cómputo para que la sección de descuentos lo use
+  PEX_COMPUTED = {
+    aeropuerto, movil,
+    personal, incidencia, efectivo, incidenciaEfectivo, svcConPeaje, svcCobrables,
+    pexPersonal, adicPersonal, pexIncidencias, sumaInci, sumaEfe, adicConServicio, membresia,
+    nSemMembresia, semsQ31,
+    semsCargadas: validWeeks.map(w=>w.semana||'?').filter(x=>x!=='?'),
+    sinMov: validWeeks.filter(w=>w.nLines===0).map(w=>w.semana||w.fname),
+    errWeeks, multiWeek: validWeeks.length>1, grand
+  };
+
+  // La vista detallada ahora vive dentro de "Descuentos y reposiciones"
+  cont.innerHTML='';
+  renderDescuentos();
+  return;
+}
+
+// Suma los conceptos PEX que aparecen en los descuentos de la liquidación (para verificar)
+function sumaPexLiquidacion(){
+  if(!LIQ || !LIQ.descuentos) return 0;
+  const pexLabels=['PEX PERSONAL','ADICIONAL - PEX PERSONAL','PEX INCIDENCIAS','MEMBRESÍA PEX','MEMBRESIA PEX',
+    'ADICIONAL - PEX CON SERVICIO','STICKER PEX'];
+  let s=0;
+  LIQ.descuentos.forEach(d=>{
+    const L=up(d.label);
+    if(pexLabels.some(p=>L.includes(p)) || (L.includes('PEX'))) s+=d.val;
+  });
+  return s;
+}
+
+// =================== EXPORTAR PDF DE PEX ===================
+function exportPexPdf(){
+  if(!LIQ){ alert('Carga una liquidación primero.'); return; }
+  const PC=PEX_COMPUTED;
+  const jsPDFns = window.jspdf || window.jsPDF ? (window.jspdf||window) : null;
+  const JsPDF = (window.jspdf && window.jspdf.jsPDF) ? window.jspdf.jsPDF : (window.jsPDF||null);
+  if(!JsPDF){ alert('No se pudo cargar el generador de PDF. Revisa tu conexión e inténtalo de nuevo.'); return; }
+
+  const doc = new JsPDF({unit:'pt', format:'a4'});
+  const pageW = doc.internal.pageSize.getWidth();
+  const M = 40; // margen
+  const navy=[30,39,97], teal=[0,168,150], red=[192,57,43], muted=[100,116,139], ink=[30,41,59];
+
+  // ---- encabezado ----
+  doc.setFillColor(navy[0],navy[1],navy[2]);
+  doc.rect(0,0,pageW,70,'F');
+  doc.setTextColor(255,255,255);
+  doc.setFont('helvetica','bold'); doc.setFontSize(16);
+  doc.text('Descuentos PEX', M, 32);
+  doc.setFont('helvetica','normal'); doc.setFontSize(10);
+  doc.text('Conecta Conductor · Detalle de peajes', M, 50);
+
+  // ---- datos del conductor ----
+  let y=92;
+  doc.setTextColor(ink[0],ink[1],ink[2]);
+  doc.setFont('helvetica','bold'); doc.setFontSize(12);
+  doc.text(LIQ.meta.nombre||'Conductor', M, y);
+  doc.setFont('helvetica','normal'); doc.setFontSize(9.5);
+  doc.setTextColor(muted[0],muted[1],muted[2]);
+  y+=16;
+  const aeropuerto=esAeropuerto(LIQ.meta.flota);
+  const metaLine=[`Móvil: ${LIQ.meta.movil||'—'}`,
+    `Flota: ${LIQ.meta.flota||'—'} (${aeropuerto?'aeropuerto':'no aeropuerto'})`,
+    LIQ.meta.semana||''].filter(Boolean).join('   ·   ');
+  doc.text(metaLine, M, y);
+  if(PC){
+    const semsCargadas=PC.semsCargadas&&PC.semsCargadas.length?PC.semsCargadas.join(', '):'—';
+    y+=14;
+    doc.text(`Semanas PEX cargadas: ${semsCargadas}`, M, y);
+  }
+  y+=10;
+  doc.setDrawColor(226,232,240); doc.line(M,y,pageW-M,y);
+  y+=14;
+
+  // ---- conceptos PEX de la liquidación (monto>0) ----
+  const pexDesc = (LIQ.descuentos||[]).filter(d=>esConceptoPex(d.label) && d.val>0);
+  if(!pexDesc.length){
+    doc.setTextColor(muted[0],muted[1],muted[2]); doc.setFontSize(11);
+    doc.text('Esta liquidación no tiene descuentos PEX con monto.', M, y+10);
+    doc.save(`PEX_${(LIQ.meta.movil||'conductor')}.pdf`);
+    return;
+  }
+  const totalPex=pexDesc.reduce((a,b)=>a+b.val,0);
+
+  // tabla resumen de conceptos
+  doc.autoTable({
+    startY:y,
+    head:[['Concepto PEX','Monto']],
+    body:pexDesc.map(d=>[d.label, 'S/ '+d.val.toLocaleString('es-PE',{minimumFractionDigits:2,maximumFractionDigits:2})]),
+    foot:[['Total Descuentos PEX','S/ '+totalPex.toLocaleString('es-PE',{minimumFractionDigits:2,maximumFractionDigits:2})]],
+    theme:'grid',
+    headStyles:{fillColor:navy, textColor:255, fontStyle:'bold', fontSize:9.5},
+    footStyles:{fillColor:[243,239,251], textColor:navy, fontStyle:'bold', fontSize:10},
+    bodyStyles:{fontSize:9.5, textColor:ink},
+    columnStyles:{1:{halign:'right', cellWidth:90}},
+    margin:{left:M,right:M}
+  });
+  y=doc.lastAutoTable.finalY+22;
+
+  // ---- detalle de peajes por concepto (si hay archivos PEX cargados) ----
+  if(PC){
+    const F2 = n => 'S/ '+(Number(n)||0).toLocaleString('es-PE',{minimumFractionDigits:2,maximumFractionDigits:2});
+    const addSection = (titulo, head, body) => {
+      if(!body.length) return;
+      if(y>doc.internal.pageSize.getHeight()-120){ doc.addPage(); y=50; }
+      doc.setFont('helvetica','bold'); doc.setFontSize(10.5); doc.setTextColor(navy[0],navy[1],navy[2]);
+      doc.text(titulo, M, y); y+=8;
+      doc.autoTable({
+        startY:y, head:[head], body, theme:'striped',
+        headStyles:{fillColor:[248,250,252], textColor:muted, fontStyle:'bold', fontSize:8.5},
+        bodyStyles:{fontSize:8.5, textColor:ink},
+        columnStyles:{[head.length-1]:{halign:'right'}},
+        margin:{left:M,right:M}
+      });
+      y=doc.lastAutoTable.finalY+18;
+    };
+    const mw=PC.multiWeek;
+    // Pex personal
+    if(PC.personal.length)
+      addSection('Pex personal',
+        (mw?['Sem','Fecha','Servicio','Plaza','Importe']:['Fecha','Servicio','Plaza','Importe']),
+        PC.personal.map(l=> (mw?[l.semana||'—']:[]).concat([l.fecha||'—', l.detalle||'—', l.plaza||'—', F2(l.importe)])));
+    // Adicional pex personal (con cargo)
+    if(PC.personal.length)
+      addSection('Adicional - Pex Personal (0.30 por peaje)',
+        (mw?['Sem','Fecha','Servicio','Plaza','Importe','Cargo']:['Fecha','Servicio','Plaza','Importe','Cargo']),
+        PC.personal.map(l=> (mw?[l.semana||'—']:[]).concat([l.fecha||'—', l.detalle||'—', l.plaza||'—', F2(l.importe), F2(0.30)])));
+    // Pex incidencias (incidencia+efectivo con motivo)
+    if(PC.incidenciaEfectivo.length)
+      addSection('Pex incidencias (incluye efectivo)',
+        (mw?['Sem','Fecha','Servicio','Motivo','Plaza','Importe']:['Fecha','Servicio','Motivo','Plaza','Importe']),
+        PC.incidenciaEfectivo.map(l=> (mw?[l.semana||'—']:[]).concat([l.fecha||'—', l.detalle||'—', l.tipo==='efectivo'?'Efectivo':'Incidencia', l.plaza||'—', F2(l.importe)])));
+    // Adicional con servicio (de la liquidación)
+    if(PC.svcConPeaje.length)
+      addSection('Adicional - Pex con servicio (servicios con peaje)',
+        ['N° Servicio','Fecha','Cliente','Peaje','Cargo'],
+        PC.svcConPeaje.map(s=>[s.servicio||'—', s.fecha||'—', (s.cliente||'—')+(s.esLatam?' (LATAM, sin cargo)':''), F2(s.peaje), F2(s.cargo)]));
+  } else {
+    doc.setFont('helvetica','italic'); doc.setFontSize(9); doc.setTextColor(muted[0],muted[1],muted[2]);
+    doc.text('Carga los archivos PEX en la herramienta para incluir el detalle peaje por peaje.', M, y);
+  }
+
+  // ---- pie ----
+  const ph=doc.internal.pageSize.getHeight();
+  doc.setFontSize(8); doc.setTextColor(muted[0],muted[1],muted[2]); doc.setFont('helvetica','normal');
+  doc.text('Generado con la herramienta de Desglose de Liquidación · Conecta Conductor', M, ph-24);
+
+  doc.save(`PEX_${(LIQ.meta.movil||'conductor')}_${(LIQ.meta.nombre||'').split(' ')[0]||''}.pdf`);
+}
+
+// =================== EVENTOS ===================
+function handleFile(file){
+  const err=document.getElementById('err');
+  err.classList.remove('show');
+  const reader=new FileReader();
+  reader.onload=e=>{
+    try{
+      const wb=XLSX.read(new Uint8Array(e.target.result),{type:'array',cellDates:true});
+      const D=parseWorkbook(wb);
+      if(!D.services.length){
+        throw new Error('No se encontraron servicios. Hojas detectadas: '+wb.SheetNames.join(', ')+
+          '. Verifica que el archivo tenga una hoja de detalle con la tabla de servicios (columnas N° Servicio, Cliente, Medio de Pago).');
+      }
+      LIQ=D;
+      PEX_COMPUTED=null;
+      render(D);
+      refreshPexHint();
+      if(PEX_WEEKS.length) renderPex();
+      document.getElementById('app').classList.add('show');
+      document.getElementById('drop').style.display='none';
+      document.getElementById('btnRefrescar').style.display='block';
+      window.scrollTo({top:0,behavior:'smooth'});
+    }catch(ex){
+      err.textContent='⚠ '+ex.message;
+      err.classList.add('show');
+      console.error(ex);
+    }
+  };
+  reader.readAsArrayBuffer(file);
+}
+
+const drop=document.getElementById('drop'), fileInput=document.getElementById('file');
+fileInput.addEventListener('change',e=>{ if(e.target.files[0]) handleFile(e.target.files[0]); });
+drop.addEventListener('dragover',e=>{e.preventDefault();drop.classList.add('drag');});
+drop.addEventListener('dragleave',()=>drop.classList.remove('drag'));
+drop.addEventListener('drop',e=>{e.preventDefault();drop.classList.remove('drag');if(e.dataTransfer.files[0])handleFile(e.dataTransfer.files[0]);});
+
+// ---- PEX listeners ----
+const dropPex=document.getElementById('dropPex'), filePex=document.getElementById('filePex');
+filePex.addEventListener('change',e=>{ if(e.target.files.length) handlePexFiles(e.target.files); });
+dropPex.addEventListener('dragover',e=>{e.preventDefault();dropPex.classList.add('drag');});
+dropPex.addEventListener('dragleave',()=>dropPex.classList.remove('drag'));
+dropPex.addEventListener('drop',e=>{e.preventDefault();dropPex.classList.remove('drag');if(e.dataTransfer.files.length)handlePexFiles(e.dataTransfer.files);});
+
+document.getElementById('fPago').addEventListener('change',renderTable);
+document.getElementById('fRazon').addEventListener('change',renderTable);
+document.getElementById('fCliente').addEventListener('input',renderTable);
+document.querySelectorAll('#detTable th').forEach(th=>{
+  th.addEventListener('click',()=>{
+    const k=th.dataset.k;
+    if(SORT.k===k) SORT.dir*=-1; else {SORT.k=k;SORT.dir=1;}
+    renderTable();
+  });
+});
+// Refrescar SOLO la liquidación: vuelve a la pantalla de carga pero CONSERVA los archivos PEX cargados
+function resetLiquidacion(){
+  document.getElementById('app').classList.remove('show');
+  document.getElementById('drop').style.display='block';
+  fileInput.value='';
+  SERVICES=[]; LIQ=null; PEX_COMPUTED=null;
+  document.getElementById('btnRefrescar').style.display='none';
+  // PEX_WEEKS se mantiene para cruzar con la próxima liquidación
+  const keptHint=document.getElementById('pexKeptHint');
+  const validPex=PEX_WEEKS.filter(w=>!w.error);
+  if(validPex.length){
+    const sems=validPex.map(w=>w.semana||'?').filter(x=>x!=='?');
+    keptHint.innerHTML=`🛣️ <b>${validPex.length} archivo(s) PEX</b> en memoria${sems.length?` (semana(s) ${sems.join(', ')})`:''} — se cruzarán con la próxima liquidación. <span class="pexclear" id="pexClearLink">Quitar archivos PEX</span>`;
+    keptHint.style.display='block';
+    const link=document.getElementById('pexClearLink');
+    if(link) link.addEventListener('click',()=>{
+      PEX_WEEKS=[]; keptHint.style.display='none';
+      document.getElementById('pexResult').innerHTML='';
+    });
+  } else {
+    keptHint.style.display='none';
+  }
+  window.scrollTo({top:0,behavior:'smooth'});
+}
+// Reset TOTAL: limpia liquidación y archivos PEX
+function resetAll(){
+  PEX_WEEKS=[];
+  document.getElementById('pexResult').innerHTML='';
+  document.getElementById('pexHint').classList.remove('show');
+  if(filePex) filePex.value='';
+  resetLiquidacion();
+}
+document.getElementById('btnOtro').addEventListener('click',resetLiquidacion);
+document.getElementById('btnRefrescar').addEventListener('click',resetLiquidacion);
+document.getElementById('btnPexPdf').addEventListener('click',exportPexPdf);
+</script>
+</body>
+</html>
