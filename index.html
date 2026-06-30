@@ -116,7 +116,8 @@
   .g4{grid-template-columns:repeat(4,1fr)}
   .g3{grid-template-columns:repeat(3,1fr)}
   .g2{grid-template-columns:repeat(2,1fr)}
-  @media(max-width:920px){.g4{grid-template-columns:repeat(2,1fr)}.g3{grid-template-columns:1fr}.g2{grid-template-columns:1fr}}
+  .g-desc{grid-template-columns:1.7fr 1fr}
+  @media(max-width:920px){.g4{grid-template-columns:repeat(2,1fr)}.g3{grid-template-columns:1fr}.g2{grid-template-columns:1fr}.g-desc{grid-template-columns:1fr}}
   @media(max-width:560px){.g4{grid-template-columns:1fr}}
 
   .kpi{background:var(--card);border:1px solid var(--line);border-radius:13px;padding:16px 18px;position:relative;overflow:hidden}
@@ -273,7 +274,7 @@
     <div id="pexResult"></div>
 
     <div class="sec-title">Descuentos y reposiciones</div>
-    <div class="grid g2">
+    <div class="grid g-desc">
       <div class="card">
         <h2><span class="dot" style="background:var(--red)"></span>Descuentos aplicados</h2>
         <div id="descuentos"></div>
@@ -1108,6 +1109,7 @@ function processPexFile(wb, fname){
     const H=up(h);
     if(H==='MOVIL')cm.movil=c; else if(H==='DETALLE')cm.detalle=c; else if(H==='OBSV')cm.obsv=c;
     else if(H==='IMPORTE')cm.importe=c; else if(H==='PLAZA')cm.plaza=c;
+    else if(H.includes('HORA'))cm.hora=c;
     else if(H.includes('FECHA'))cm.fecha=c; else if(H==='PLACA')cm.placa=c;
   });
   // extraer TODAS las líneas con su móvil (sin filtrar)
@@ -1123,13 +1125,18 @@ function processPexFile(wb, fname){
     if(fecha instanceof Date) fecha=fecha.toLocaleDateString('es-PE');
     else if(typeof fecha==='number'){const d=XLSX.SSF.parse_date_code(fecha); if(d)fecha=`${String(d.d).padStart(2,'0')}/${String(d.m).padStart(2,'0')}/${d.y}`;}
     else fecha=norm(fecha).split(' ')[0];
+    // Hora Inicio: puede venir como Date, número (fracción de día) o texto
+    let hora=row[cm.hora];
+    if(hora instanceof Date){ hora=hora.toLocaleTimeString('es-PE',{hour:'2-digit',minute:'2-digit'}); }
+    else if(typeof hora==='number'){ const d=XLSX.SSF.parse_date_code(hora); if(d) hora=`${String(d.H).padStart(2,'0')}:${String(d.M).padStart(2,'0')}`; else hora=''; }
+    else { hora=norm(hora); const hm=hora.match(/(\d{1,2}:\d{2})/); hora=hm?hm[1]:hora; }
     if(!movilRow || (!detalle && !importe)) continue;
     let tipo='normal';
     const O=up(obsv);
     if(O.includes('USO PERSONAL')) tipo='personal';
     else if(O.includes('INCIDENCIA')) tipo='incidencia';
     else if(O.includes('EFECTIVO')) tipo='efectivo';
-    allLines.push({movil:movilRow,detalle,obsv,importe,plaza,fecha,tipo,semana});
+    allLines.push({movil:movilRow,detalle,obsv,importe,plaza,fecha,hora,tipo,semana});
   }
   return { fname, semana, allLines };
 }
@@ -1436,11 +1443,12 @@ function pexDetailTable(det){
   if(!det.lines.length) return '<div class="pexna">Sin peajes registrados para este concepto.</div>';
   const mw=PC.multiWeek;
   return `<table class="pexd"><thead><tr>
-    ${mw?'<th>Sem</th>':''}<th>Fecha</th><th>Servicio</th>${det.motivoCol?'<th>Motivo</th>':''}<th>Plaza</th><th class="num">Importe</th>${det.cargoCol?'<th class="num">Cargo</th>':''}
+    ${mw?'<th>Sem</th>':''}<th>Fecha</th><th>Hora</th><th>Servicio</th>${det.motivoCol?'<th>Motivo</th>':''}<th>Plaza</th><th class="num">Importe</th>${det.cargoCol?'<th class="num">Cargo</th>':''}
   </tr></thead><tbody>
     ${det.lines.map(l=>`<tr>
       ${mw?`<td>${l.semana||'—'}</td>`:''}
       <td>${l.fecha||'—'}</td>
+      <td>${l.hora||'—'}</td>
       <td>${l.detalle||'—'}</td>
       ${det.motivoCol?`<td>${motivoBadge(l.tipo)}</td>`:''}
       <td>${l.plaza||'—'}</td>
@@ -1632,18 +1640,18 @@ function exportPexPdf(){
     // Pex personal
     if(PC.personal.length)
       addSection('Pex personal',
-        (mw?['Sem','Fecha','Servicio','Plaza','Importe']:['Fecha','Servicio','Plaza','Importe']),
-        PC.personal.map(l=> (mw?[l.semana||'—']:[]).concat([l.fecha||'—', l.detalle||'—', l.plaza||'—', F2(l.importe)])));
+        (mw?['Sem','Fecha','Hora','Servicio','Plaza','Importe']:['Fecha','Hora','Servicio','Plaza','Importe']),
+        PC.personal.map(l=> (mw?[l.semana||'—']:[]).concat([l.fecha||'—', l.hora||'—', l.detalle||'—', l.plaza||'—', F2(l.importe)])));
     // Adicional pex personal (con cargo)
     if(PC.personal.length)
       addSection('Adicional - Pex Personal (0.30 por peaje)',
-        (mw?['Sem','Fecha','Servicio','Plaza','Importe','Cargo']:['Fecha','Servicio','Plaza','Importe','Cargo']),
-        PC.personal.map(l=> (mw?[l.semana||'—']:[]).concat([l.fecha||'—', l.detalle||'—', l.plaza||'—', F2(l.importe), F2(0.30)])));
+        (mw?['Sem','Fecha','Hora','Servicio','Plaza','Importe','Cargo']:['Fecha','Hora','Servicio','Plaza','Importe','Cargo']),
+        PC.personal.map(l=> (mw?[l.semana||'—']:[]).concat([l.fecha||'—', l.hora||'—', l.detalle||'—', l.plaza||'—', F2(l.importe), F2(0.30)])));
     // Pex incidencias (incidencia+efectivo con motivo)
     if(PC.incidenciaEfectivo.length)
       addSection('Pex incidencias (incluye efectivo)',
-        (mw?['Sem','Fecha','Servicio','Motivo','Plaza','Importe']:['Fecha','Servicio','Motivo','Plaza','Importe']),
-        PC.incidenciaEfectivo.map(l=> (mw?[l.semana||'—']:[]).concat([l.fecha||'—', l.detalle||'—', l.tipo==='efectivo'?'Efectivo':'Incidencia', l.plaza||'—', F2(l.importe)])));
+        (mw?['Sem','Fecha','Hora','Servicio','Motivo','Plaza','Importe']:['Fecha','Hora','Servicio','Motivo','Plaza','Importe']),
+        PC.incidenciaEfectivo.map(l=> (mw?[l.semana||'—']:[]).concat([l.fecha||'—', l.hora||'—', l.detalle||'—', l.tipo==='efectivo'?'Efectivo':'Incidencia', l.plaza||'—', F2(l.importe)])));
     // Adicional con servicio (de la liquidación)
     if(PC.svcConPeaje.length)
       addSection('Adicional - Pex con servicio (servicios con peaje)',
