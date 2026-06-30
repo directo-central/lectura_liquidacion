@@ -40,6 +40,8 @@
   .pexhint{background:var(--amber-bg);border:1px solid #EBD9B0;color:var(--amber);
     padding:11px 15px;border-radius:10px;margin-bottom:14px;font-size:13px;display:none}
   .pexhint.show{display:block}
+  .pexhint.ok{background:var(--green-bg);border-color:#A7E8D2;color:var(--green)}
+  .pexhint.warn{background:var(--amber-bg);border-color:#EBD9B0;color:var(--amber)}
   .pexauto{padding:11px 15px;border-radius:10px;margin-bottom:12px;font-size:13px;border:1px solid transparent}
   .pexauto.load{background:#EEF4FF;border-color:#C7DBFF;color:#2563EB}
   .pexauto.ok{background:var(--green-bg);border-color:#A7E8D2;color:var(--green)}
@@ -86,6 +88,7 @@
   .pexnote{margin-top:10px;padding:10px 12px;background:var(--blue-bg);border-radius:9px;font-size:12px;color:var(--blue)}
   .pexsub{margin:8px 0;border:1px solid #E6E0F0;border-radius:10px;overflow:hidden;background:#FBFAFE}
   .pexsub-head{display:flex;justify-content:space-between;align-items:center;padding:9px 14px;background:#F3EFFB;border-bottom:1px solid #E6E0F0}
+  .pexsub-right{display:flex;align-items:center;gap:12px}
   .pexsub-title{font-size:13px;font-weight:800;color:#5B3FA8}
   .pexsub-total{font-size:14px;font-weight:800;color:var(--red);font-variant-numeric:tabular-nums}
   .pexsub-body{padding:4px 14px}
@@ -188,6 +191,8 @@
 
   .explain{background:#FAFBFD;border:1px solid var(--line);border-radius:11px;padding:14px 16px;font-size:12.5px;color:var(--muted);margin-top:8px}
   .explain b{color:var(--ink)}
+  .explain-list{margin:0;padding-left:18px;list-style:disc}
+  .explain-list li{margin:3px 0;line-height:1.5}
 
   .actions{display:flex;gap:10px;margin:18px 0 8px;flex-wrap:wrap}
   .btn{padding:10px 16px;border:none;border-radius:10px;font-size:13.5px;font-weight:700;cursor:pointer;font-family:inherit;transition:.12s}
@@ -270,10 +275,7 @@
     <div class="sec-title">Descuentos y reposiciones</div>
     <div class="grid g2">
       <div class="card">
-        <h2 style="display:flex;align-items:center;gap:8px">
-          <span class="dot" style="background:var(--red)"></span>Descuentos aplicados
-          <button class="btn-pdf" id="btnPexPdf" style="display:none">⬇ PDF de PEX</button>
-        </h2>
+        <h2><span class="dot" style="background:var(--red)"></span>Descuentos aplicados</h2>
         <div id="descuentos"></div>
       </div>
       <div class="card">
@@ -906,9 +908,10 @@ function render(D){
   const detByMedio={};
   D.services.forEach(s=>{
     const k=medioKey(s.medio||'Otro');
-    detByMedio[k]=detByMedio[k]||{producido:0, cond:0, cnt:0, nombre:s.medio||'Otro'};
+    detByMedio[k]=detByMedio[k]||{producido:0, cond:0, cnt:0, peaje:0, nombre:s.medio||'Otro'};
     detByMedio[k].producido+=N(s.total);
     detByMedio[k].cond+=N(s.conductor);
+    detByMedio[k].peaje+=N(s.peaje);
     detByMedio[k].cnt++;
   });
   // 2) índice del resumen por medio (clave normalizada)
@@ -946,13 +949,17 @@ function render(D){
   let pagosHtml=`<table class="paytable">
     <thead><tr>
       <th>Tipo de pago</th>
+      <th class="num">N° serv.</th>
       <th class="num">Monto producido</th>
       <th class="num">Monto a cobrar</th>
       <th class="num">Monto cobrado</th>
     </tr></thead><tbody>`;
+  let tCnt=0;
   payRows.forEach(r=>{
+    tCnt+=r.cnt||0;
     pagosHtml+=`<tr>
       <td><span class="paychip ${pagoClass(r.medio)}">${r.medio}</span></td>
+      <td class="num">${r.cnt||0}</td>
       <td class="num">${F(r.producido)}</td>
       <td class="num ${r.aCobrar>0?'pos':'zero'}">${F(r.aCobrar)}</td>
       <td class="num ${r.cobrado>0?'amber':'zero'}">${F(r.cobrado)}</td>
@@ -960,15 +967,19 @@ function render(D){
   });
   pagosHtml+=`<tr class="trtot">
       <td>Total</td>
+      <td class="num">${tCnt}</td>
       <td class="num">${F(tProd)}</td>
       <td class="num pos">${F(tCobrar)}</td>
       <td class="num amber">${F(tCobrado)}</td>
     </tr></tbody></table>`;
   document.getElementById('pagos').innerHTML=pagosHtml;
   document.getElementById('pagosExplain').innerHTML=
-    `<b>Monto producido</b>: lo que se movió en cada medio (sin comisión). `+
-    `<b>Monto a cobrar</b>: lo que la empresa le deposita al conductor. `+
-    `<b>Monto cobrado</b>: lo que el conductor ya recibió en mano (efectivo y yape).`;
+    `<ul class="explain-list">`+
+    `<li><b>N° serv.</b>: cantidad de servicios realizados con ese medio de pago.</li>`+
+    `<li><b>Monto producido</b>: lo que se movió en cada medio, peajes incluidos (sin descontar comisión).</li>`+
+    `<li><b>Monto a cobrar</b>: lo que la empresa le deposita al conductor por ese medio.</li>`+
+    `<li><b>Monto cobrado</b>: lo que el conductor ya recibió en mano (efectivo y yape).</li>`+
+    `</ul>`;
 
   // ---- montos a facturar: V11 (corp) y V26 (part) ----
   const corpSvc=D.services.filter(s=>s.razon==='corp');
@@ -1136,13 +1147,28 @@ function refreshPexHint(){
   if(!LIQ){ hint.classList.remove('show'); return; }
   const sems=semanasEnTexto(LIQ.meta.pexSemanasTexto);
   const flotaTxt = LIQ.meta.flota ? `Flota: <b>${LIQ.meta.flota}</b> (${esAeropuerto(LIQ.meta.flota)?'aeropuerto':'no aeropuerto'})` : 'Flota no detectada';
+  // semanas que YA están cargadas en memoria
+  const cargadas = PEX_WEEKS.filter(w=>!w.error && w.semana).map(w=>w.semana);
   if(sems.length){
-    hint.innerHTML=`Esta liquidación descuenta PEX de las semanas <b>${sems.join(', ')}</b>. Carga esos archivos para ver el detalle. &nbsp;·&nbsp; ${flotaTxt}`;
-    hint.classList.add('show');
+    const faltan = sems.filter(s=>!cargadas.includes(s));
+    const tienen = sems.filter(s=>cargadas.includes(s));
+    if(faltan.length===0){
+      // todas las semanas requeridas están cargadas → mensaje verde de OK
+      hint.className='pexhint show ok';
+      hint.innerHTML=`✅ Esta liquidación descuenta PEX de la(s) semana(s) <b>${sems.join(', ')}</b>, y ${sems.length>1?'todas están':'está'} cargada(s). El detalle se muestra abajo. &nbsp;·&nbsp; ${flotaTxt}`;
+    } else if(tienen.length>0){
+      // faltan algunas
+      hint.className='pexhint show warn';
+      hint.innerHTML=`⚠ Esta liquidación descuenta PEX de la(s) semana(s) <b>${sems.join(', ')}</b>. Cargada(s): <b>${tienen.join(', ')}</b>. Falta(n): <b>${faltan.join(', ')}</b>. &nbsp;·&nbsp; ${flotaTxt}`;
+    } else {
+      // no hay ninguna cargada
+      hint.className='pexhint show';
+      hint.innerHTML=`Esta liquidación descuenta PEX de la(s) semana(s) <b>${sems.join(', ')}</b>. Carga esos archivos para ver el detalle. &nbsp;·&nbsp; ${flotaTxt}`;
+    }
     sub.textContent=`Semanas esperadas según la liquidación: ${sems.join(', ')}`;
   } else {
+    hint.className='pexhint show';
     hint.innerHTML=`No se detectó texto de descuento PEX de semanas pasadas en esta liquidación. Puedes cargar archivos PEX igualmente. &nbsp;·&nbsp; ${flotaTxt}`;
-    hint.classList.add('show');
   }
 }
 
@@ -1264,7 +1290,7 @@ async function autoCargarPex(){
       PEX_WEEKS.sort((a,b)=>(a.semana||999)-(b.semana||999));
       const sems=PEX_WEEKS.filter(w=>!w.error).map(w=>w.semana).filter(Boolean);
       setStatus(`✅ <b>${cargados} archivo(s) PEX</b> cargados automáticamente${sems.length?` (semana(s) ${[...new Set(sems)].sort((a,b)=>a-b).join(', ')})`:''}. Solo sube la liquidación del conductor.`,'ok');
-      if(LIQ) renderPex();
+      if(LIQ){ refreshPexHint(); renderPex(); }
     } else {
       throw new Error('sin-archivos');
     }
@@ -1317,10 +1343,6 @@ function renderDescuentos(){
   const pexDesc = D.descuentos.filter(d=>esConceptoPex(d.label) && d.val>0);
   const otrosDesc = D.descuentos.filter(d=>!esConceptoPex(d.label) && d.val>0);
 
-  // mostrar/ocultar botón de PDF según haya conceptos PEX
-  const btnPdf=document.getElementById('btnPexPdf');
-  if(btnPdf) btnPdf.style.display = pexDesc.length ? 'inline-block' : 'none';
-
   let dHtml='';
   let idx=0;
 
@@ -1338,7 +1360,10 @@ function renderDescuentos(){
     dHtml+=`<div class="pexsub">
       <div class="pexsub-head">
         <span class="pexsub-title">🛣️ Descuentos PEX</span>
-        <span class="pexsub-total">− ${F(totalPex)}</span>
+        <div class="pexsub-right">
+          <button class="btn-pdf" id="btnPexPdf2">⬇ PDF de PEX</button>
+          <span class="pexsub-total">− ${F(totalPex)}</span>
+        </div>
       </div>
       <div class="pexsub-body">`;
     pexDesc.forEach(d=>{
@@ -1371,6 +1396,10 @@ function renderDescuentos(){
     dHtml=`<div class="row"><div class="l" style="color:var(--muted)">Sin descuentos esta semana</div><div class="v zero">${F(0)}</div></div>`;
   }
   cont.innerHTML=dHtml;
+
+  // conectar el botón de PDF (se recrea en cada render dentro de la sub-sección PEX)
+  const btnPdf2=document.getElementById('btnPexPdf2');
+  if(btnPdf2) btnPdf2.addEventListener('click',exportPexPdf);
 
   // listeners de despliegue
   cont.querySelectorAll('[data-toggle]').forEach(r=>{
@@ -1721,8 +1750,6 @@ function resetAll(){
 }
 document.getElementById('btnOtro').addEventListener('click',resetLiquidacion);
 document.getElementById('btnRefrescar').addEventListener('click',resetLiquidacion);
-document.getElementById('btnPexPdf').addEventListener('click',exportPexPdf);
-
 // Intentar cargar los PEX automáticamente desde la carpeta del repositorio al abrir la herramienta
 autoCargarPex();
 </script>
