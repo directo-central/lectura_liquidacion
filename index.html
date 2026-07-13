@@ -2391,6 +2391,18 @@ function handleFile(file){
       }
       LIQ=D;
       PEX_COMPUTED=null;
+      MAESTRO_DET=null;   // el detalle del maestro es por liquidación: no arrastrar el anterior
+
+      // el aviso "PEX en memoria" es de la pantalla de carga: ya no aplica
+      const keptHint=document.getElementById('pexKeptHint');
+      if(keptHint) keptHint.style.display='none';
+
+      // descartar los PEX de semanas que esta liquidación NO descuenta (quedaban de la anterior)
+      const semsDeEstaLiq = semanasEnTexto(D.meta.pexSemanasTexto);
+      if(semsDeEstaLiq.length){
+        PEX_WEEKS = PEX_WEEKS.filter(w=>w.semana==null || semsDeEstaLiq.includes(w.semana));
+      }
+
       render(D);
       refreshPexHint();
       if(PEX_WEEKS.length) renderPex();
