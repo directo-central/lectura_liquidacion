@@ -1854,7 +1854,7 @@ async function cargarMaestroDetalle(){
     let data = null;
 
     // caché local del navegador: evita volver a bajar/procesar el maestro de esa semana
-    const ckey = 'maestro_liq_'+nLiq;
+    const ckey = 'maestro_liq_'+nLiq+'_v2';
     try{
       const raw = localStorage.getItem(ckey);
       if(raw) data = JSON.parse(raw);
@@ -1878,14 +1878,19 @@ async function cargarMaestroDetalle(){
       catch(e){ console.info('No se pudo guardar el maestro en caché local (probablemente por tamaño)', e); }
     }
 
-    const mismoMovil = x => String(x.movil||'').trim() === movil;
+    // el móvil puede venir como número (2394) o texto ("2394", " 02394 ") según la fuente:
+    // comparamos numéricamente para que el cruce no dependa del formato
+    const movilNum = parseInt(String(movil).replace(/\D/g,''),10);
+    const mismoMovil = x => parseInt(String(x.movil==null?'':x.movil).replace(/\D/g,''),10) === movilNum;
     MAESTRO_DET = {
       desc: (data.descuentos||[]).filter(mismoMovil),
       reps: (data.reposiciones||[]).filter(mismoMovil)
     };
-    console.info(`Maestro LIQ #${nLiq}: ${(data.descuentos||[]).length} dsctos / ${(data.reposiciones||[]).length} reps en total; del móvil ${movil}: ${MAESTRO_DET.desc.length} y ${MAESTRO_DET.reps.length}`);
+    const totD = (data.descuentos||[]).length, totR = (data.reposiciones||[]).length;
+    console.info(`Maestro LIQ #${nLiq}: ${totD} dsctos / ${totR} reps en total; del móvil ${movil} (${movilNum}): ${MAESTRO_DET.desc.length} y ${MAESTRO_DET.reps.length}`);
     if(!MAESTRO_DET.desc.length && !MAESTRO_DET.reps.length){
-      setPexStatus(`⚠ El maestro de la LIQ #${nLiq} se leyó, pero no tiene líneas para el móvil <b>${movil}</b>.`,'load');
+      const muestra = [...(data.descuentos||[]),...(data.reposiciones||[])].slice(0,5).map(x=>JSON.stringify(x.movil)).join(', ');
+      setPexStatus(`⚠ El maestro de la LIQ #${nLiq} se leyó (${totD} descuentos / ${totR} reposiciones en total), pero ninguna línea es del móvil <b>${movil}</b>. Móviles de ejemplo en el maestro: ${muestra||'—'}`,'load');
     } else {
       setPexStatus(`✅ Detalle del maestro LIQ #${nLiq} cargado (${MAESTRO_DET.desc.length} descuento(s), ${MAESTRO_DET.reps.length} reposición(es) del móvil ${movil}). Despliega las filas para ver el desglose.`,'ok');
     }
