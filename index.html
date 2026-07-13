@@ -1412,18 +1412,24 @@ function findValidationSheet(wb){
   return null;
 }
 
-// Detecta nº de semana desde el nombre del archivo
+// Detecta nº de semana de PEAJES (el "SEMANA YY" del nombre = semana en que se usaron los peajes)
 function semanaDeNombre(fname){
-  const m=String(fname).match(/SEMANA[_\s-]*(\d{1,3})/i) || String(fname).match(/SEM[_\s-]*(\d{1,3})/i) || String(fname).match(/(\d{1,3})(?=\.xlsx?$)/i);
+  const m=String(fname).match(/SEMANA[_\s-]*(\d{1,3})/i) || String(fname).match(/SEM[_\s-]*(\d{1,3})/i) || String(fname).match(/(\d{1,3})(?=\s*(\(\d+\))?\.xlsx?$)/i);
+  return m?parseInt(m[1],10):null;
+}
+// Detecta nº de LIQUIDACIÓN (el "LIQ. #XX" del nombre = liquidación en la que se cobra ese PEX)
+function liqDeNombre(fname){
+  const m=String(fname).match(/LIQ\.?\s*#?\s*(\d{1,3})/i);
   return m?parseInt(m[1],10):null;
 }
 
 // Procesa un archivo PEX: extrae TODAS las líneas (todos los móviles) para poder re-filtrar luego
 function processPexFile(wb, fname){
   const vs=findValidationSheet(wb);
-  if(!vs) return {error:'No se encontró hoja de validación (columnas MOVIL, DETALLE, OBSV, IMPORTE, PLAZA).', fname};
+  if(!vs) return {error:'No se encontró hoja de validación (columnas MOVIL, DETALLE, OBSV, IMPORTE, PLAZA). Hojas: '+wb.SheetNames.join(', '), fname, semana:semanaDeNombre(fname), liq:liqDeNombre(fname)};
   const {grid, headerRow}=vs;
   const semana=semanaDeNombre(fname);
+  const liq=liqDeNombre(fname);
   // mapear columnas
   const cm={};
   grid[headerRow].forEach((h,c)=>{
@@ -1459,7 +1465,7 @@ function processPexFile(wb, fname){
     else if(O.includes('EFECTIVO')) tipo='efectivo';
     allLines.push({movil:movilRow,detalle,obsv,importe,plaza,fecha,hora,tipo,semana});
   }
-  return { fname, semana, allLines };
+  return { fname, semana, liq, allLines };
 }
 
 // Filtra las líneas de un archivo PEX por móvil (se llama al renderizar, con el móvil de la liq actual)
@@ -1576,6 +1582,7 @@ async function listarPexViaDrive(){
   if(!Array.isArray(items)) throw new Error('drive-formato');
   return items.map(it=>({
     nombre: it.nombre,
+    modificado: it.modificado,
     cargar: async ()=>{
       const data = await jsonpRequest(PEX_DRIVE_WEBAPP_URL+'?id='+encodeURIComponent(it.id), 15000);
       if(!data || !data.base64) throw new Error('drive-sin-contenido');
@@ -1658,21 +1665,46 @@ async function autoCargarPex(){
     }
     if(!archivos || !archivos.length) throw new Error('sin-archivos');
 
-    // 2) descargar y procesar cada archivo (cada fuente sabe cómo traer su propio contenido)
+    // 2) descargar y procesar TODOS los archivos en paralelo (antes era uno por uno, muy lento con 20+ archivos)
+    const resultados = await Promise.allSettled(archivos.map(async item=>{
+      const wb = await item.cargar();
+      const res = processPexFile(wb, item.nombre);
+      res.modificado = item.modificado || null;
+      return res;
+    }));
+
     let cargados=0;
-    for(const item of archivos){
-      try{
-        const wb = await item.cargar();
-        const res = processPexFile(wb, item.nombre);
+    for(let i=0;i<resultados.length;i++){
+      const r = resultados[i];
+      if(r.status==='rejected'){ console.warn('No se pudo cargar PEX', archivos[i].nombre, r.reason); continue; }
+      const res = r.value;
+      cargados++;
+      // deduplicar por Nº de semana: si dos archivos declaran la misma semana (ej. una re-subida
+      // con nombre "(1)"), se queda con el que tenga fecha de modificación más reciente.
+      if(res.semana!=null){
+        const existente = PEX_WEEKS.find(w=>w.semana===res.semana && !w.error);
+        if(existente){
+          const tExist = existente.modificado ? new Date(existente.modificado).getTime() : 0;
+          const tNew = res.modificado ? new Date(res.modificado).getTime() : 0;
+          if(tNew < tExist) continue; // el que ya teníamos es más reciente, no lo reemplazamos
+          PEX_WEEKS = PEX_WEEKS.filter(w=>w!==existente);
+        }
+      } else {
         PEX_WEEKS = PEX_WEEKS.filter(w=>w.fname!==res.fname);
-        PEX_WEEKS.push(res);
-        cargados++;
-      }catch(e){ console.warn('No se pudo cargar PEX', item.nombre, e); }
+      }
+      PEX_WEEKS.push(res);
     }
     if(cargados){
       PEX_WEEKS.sort((a,b)=>(a.semana||999)-(b.semana||999));
-      const sems=PEX_WEEKS.filter(w=>!w.error).map(w=>w.semana).filter(Boolean);
-      setStatus(`✅ <b>${cargados} archivo(s) PEX</b> cargados automáticamente${sems.length?` (semana(s) ${[...new Set(sems)].sort((a,b)=>a-b).join(', ')})`:''}. Solo sube la liquidación del conductor.`,'ok');
+      const okWeeks = PEX_WEEKS.filter(w=>!w.error);
+      const badWeeks = PEX_WEEKS.filter(w=>w.error);
+      const sems = okWeeks.map(w=>w.semana).filter(Boolean);
+      let msg = `✅ <b>${okWeeks.length} archivo(s) PEX</b> cargados${sems.length?` (semana(s) de peajes ${[...new Set(sems)].sort((a,b)=>a-b).join(', ')})`:''}.`;
+      if(badWeeks.length){
+        const detalles = badWeeks.slice(0,3).map(w=>`<li><b>${w.fname}</b>: ${w.error}</li>`).join('');
+        msg += ` <span style="color:var(--amber)">⚠ ${badWeeks.length} archivo(s) no se pudieron leer:</span><ul style="margin:4px 0 0 16px">${detalles}${badWeeks.length>3?`<li>…y ${badWeeks.length-3} más</li>`:''}</ul>`;
+      }
+      setStatus(msg, badWeeks.length && !okWeeks.length ? 'load' : 'ok');
       if(LIQ){ refreshPexHint(); renderPex(); }
     } else {
       throw new Error('sin-archivos');
