@@ -1681,19 +1681,17 @@ async function autoCargarPex(){
       semana: semanaDeNombre(a.nombre),
       liq: liqDeNombre(a.nombre)
     }));
-    // si hay varios archivos para la misma semana de peajes, nos quedamos con el más reciente
-    const porSemana = new Map();
-    for(const a of PEX_INDEX){
-      if(a.semana==null) continue;
-      const prev = porSemana.get(a.semana);
-      const tPrev = prev && prev.modificado ? new Date(prev.modificado).getTime() : -1;
-      const tAct  = a.modificado ? new Date(a.modificado).getTime() : 0;
-      if(!prev || tAct >= tPrev) porSemana.set(a.semana, a);
-    }
-    PEX_INDEX = [...porSemana.values()].sort((a,b)=>(a.semana||999)-(b.semana||999));
+    // deduplicar SOLO por nombre exacto (no por semana: dos archivos distintos pueden compartir
+    // número de semana y no queremos descartar ninguno por error)
+    const vistos = new Set();
+    PEX_INDEX = PEX_INDEX.filter(a=>{
+      if(vistos.has(a.nombre)) return false;
+      vistos.add(a.nombre); return true;
+    }).sort((a,b)=>(a.semana||999)-(b.semana||999));
 
+    console.info('PEX indexados:', PEX_INDEX.map(a=>`${a.nombre} → semana ${a.semana}, liq ${a.liq}`));
     const semsDisp = PEX_INDEX.map(a=>a.semana).filter(x=>x!=null);
-    setPexStatus(`✅ <b>${PEX_INDEX.length} archivo(s) PEX</b> disponibles en la carpeta${semsDisp.length?` (semana(s) ${semsDisp[0]}–${semsDisp[semsDisp.length-1]})`:''}. Sube la liquidación y se descargará solo lo necesario.`,'ok');
+    setPexStatus(`✅ <b>${PEX_INDEX.length} archivo(s) PEX</b> disponibles en la carpeta${semsDisp.length?` (semana(s) ${Math.min(...semsDisp)}–${Math.max(...semsDisp)})`:''}. Sube la liquidación y se descargará solo lo necesario.`,'ok');
 
     if(LIQ) await cargarPexNecesarios();
   }catch(err){
@@ -1714,24 +1712,35 @@ async function cargarPexNecesarios(){
   const yaCargadas = new Set(PEX_WEEKS.filter(w=>!w.error && w.semana!=null).map(w=>w.semana));
   pendientes = pendientes.filter(a=>!yaCargadas.has(a.semana));
 
+  // semanas que la liquidación pide pero que NO existen como archivo en la carpeta
+  const semsIndexadas = new Set(PEX_INDEX.map(a=>a.semana));
+  const semsSinArchivo = semsQ31.filter(s=>!semsIndexadas.has(s));
+
+  console.info('PEX: la liquidación pide semanas', semsQ31, '| a descargar:', pendientes.map(p=>p.nombre), '| sin archivo:', semsSinArchivo);
+
   if(pendientes.length){
     setPexStatus(`⏳ Descargando ${pendientes.length} archivo(s) PEX (semana(s) ${pendientes.map(a=>a.semana).join(', ')})…`,'load');
-    const resultados = await Promise.allSettled(pendientes.map(async item=>{
-      const wb = await item.cargar();
-      const res = processPexFile(wb, item.nombre);
-      res.modificado = item.modificado || null;
-      return res;
-    }));
-    for(let i=0;i<resultados.length;i++){
-      const r = resultados[i];
-      if(r.status==='rejected'){
-        console.warn('No se pudo cargar PEX', pendientes[i].nombre, r.reason);
-        PEX_WEEKS.push({fname:pendientes[i].nombre, semana:pendientes[i].semana, error:String(r.reason && r.reason.message || r.reason)});
-        continue;
+    // en lotes de 4: muchas descargas simultáneas hacen que Apps Script rechace algunas
+    const LOTE = 4;
+    for(let i=0;i<pendientes.length;i+=LOTE){
+      const lote = pendientes.slice(i, i+LOTE);
+      const resultados = await Promise.allSettled(lote.map(async item=>{
+        const wb = await item.cargar();
+        const res = processPexFile(wb, item.nombre);
+        res.modificado = item.modificado || null;
+        return res;
+      }));
+      for(let j=0;j<resultados.length;j++){
+        const r = resultados[j];
+        if(r.status==='rejected'){
+          console.warn('No se pudo cargar PEX', lote[j].nombre, r.reason);
+          PEX_WEEKS.push({fname:lote[j].nombre, semana:lote[j].semana, error:String((r.reason && r.reason.message) || r.reason)});
+          continue;
+        }
+        const res = r.value;
+        PEX_WEEKS = PEX_WEEKS.filter(w=>w.fname!==res.fname);
+        PEX_WEEKS.push(res);
       }
-      const res = r.value;
-      PEX_WEEKS = PEX_WEEKS.filter(w=>w.fname!==res.fname && !(w.semana===res.semana && !w.error));
-      PEX_WEEKS.push(res);
     }
     PEX_WEEKS.sort((a,b)=>(a.semana||999)-(b.semana||999));
   }
@@ -1740,6 +1749,9 @@ async function cargarPexNecesarios(){
   const bad = PEX_WEEKS.filter(w=>w.error);
   const sems = ok.map(w=>w.semana).filter(x=>x!=null);
   let msg = `✅ <b>${ok.length} archivo(s) PEX</b> cargados${sems.length?` (semana(s) de peajes ${[...new Set(sems)].sort((a,b)=>a-b).join(', ')})`:''}.`;
+  if(semsSinArchivo.length){
+    msg += ` <span style="color:var(--amber)">⚠ No hay archivo en la carpeta para la(s) semana(s) <b>${semsSinArchivo.join(', ')}</b>.</span>`;
+  }
   if(bad.length){
     const detalles = bad.slice(0,3).map(w=>`<li><b>${w.fname}</b>: ${w.error}</li>`).join('');
     msg += ` <span style="color:var(--amber)">⚠ ${bad.length} no se pudieron leer:</span><ul style="margin:4px 0 0 16px">${detalles}${bad.length>3?`<li>…y ${bad.length-3} más</li>`:''}</ul>`;
