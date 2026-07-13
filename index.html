@@ -7,6 +7,12 @@
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.8.2/jspdf.plugin.autotable.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+<script>
+  if (window['pdfjsLib']) {
+    pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+  }
+</script>
 <style>
   :root{
     --navy:#1E2761; --teal:#00A896; --teal-d:#0D7377;
@@ -227,9 +233,9 @@
 
   <div class="drop" id="drop">
     <div class="ic">📄</div>
-    <b>Haz clic o arrastra aquí el Excel de liquidación</b>
-    <small>Formato .xlsx con las hojas de resumen y detalle (ej. Liq_3206.xlsx)</small>
-    <input type="file" id="file" accept=".xlsx,.xls">
+    <b>Haz clic o arrastra aquí la liquidación (Excel o PDF)</b>
+    <small>.xlsx con las hojas de resumen y detalle, o el PDF de liquidación del conductor (ej. Liq_3206.xlsx o LIQUIDACION_N_25-2026_CONDUCTOR_380.pdf)</small>
+    <input type="file" id="file" accept=".xlsx,.xls,.pdf">
   </div>
   <div class="pexhint" id="pexKeptHint" style="display:none"></div>
 
@@ -368,6 +374,321 @@ function findText(grid, label){
     for(let c=0;c<(grid[r]||[]).length;c++)
       if(up(grid[r][c]).includes(L)) return {r,c,row:grid[r]};
   return null;
+}
+
+// =================== LECTURA DE PDF DE LIQUIDACIÓN ===================
+// El PDF de liquidación tiene 2 páginas: 1) detalle de servicios (tabla), 2) balance/resumen (dashboard).
+// Estrategia: usar pdf.js para extraer cada fragmento de texto con su posición (x,y), agruparlos en
+// "líneas" visuales y luego ubicar cada dato por su etiqueta y posición relativa (no por orden de lectura
+// plano, porque la página 2 tiene varios paneles uno al lado del otro).
+
+const FLOTAS_CONOCIDAS_PDF = ['AEROPUERTO REGULAR','AEROPUERTO VAN','MEMBRESÍA DIURNA','MEMBRESIA DIURNA',
+  'MEMBRESÍA NOCTURNA','MEMBRESIA NOCTURNA','MEMBRESÍA URBANO','MEMBRESIA URBANO','URBANO','AEROLINEAS','AEROLÍNEAS',
+  'REGULAR URBANO','PLAZAS'];
+// NPDF() (definida arriba) no elimina comas de miles porque las celdas de Excel ya llegan como números;
+// el texto extraído del PDF sí trae comas ("1,691.58"), así que usamos este parser específico para montos PDF.
+const NPDF = v => { const x = parseFloat(String(v==null?'':v).replace(/,/g,'')); return isNaN(x)?0:x; };
+
+function pdfBuildLines(items, tol=2.2){
+  const clean = items.filter(it=>it.text && it.text.trim());
+  clean.sort((a,b)=> a.y-b.y || a.x-b.x);
+  const lines=[];
+  for(const w of clean){
+    let placed=false;
+    for(const ln of lines){ if(Math.abs(ln.y-w.y)<=tol){ ln.items.push(w); placed=true; break; } }
+    if(!placed) lines.push({y:w.y, items:[w]});
+  }
+  for(const ln of lines){ ln.items.sort((a,b)=>a.x-b.x); ln.tok = ln.items.map(i=>norm(i.text)); }
+  lines.sort((a,b)=>a.y-b.y);
+  return lines;
+}
+async function pdfGetPageItems(doc, n){
+  const page = await doc.getPage(n);
+  const content = await page.getTextContent();
+  const viewport = page.getViewport({scale:1});
+  return content.items.map(it=>{
+    const tx = pdfjsLib.Util.transform(viewport.transform, it.transform);
+    return {text: it.str, x: tx[4], y: tx[5]};
+  });
+}
+function pdfFindItem(items, predicate){ return items.find(it=>predicate(up(it.text))); }
+function pdfAmountNear(items, anchor, {dx=250, dyTol=3}={}){
+  const cand = items.filter(it=>Math.abs(it.y-anchor.y)<=dyTol && it.x>anchor.x && it.x<=anchor.x+dx).sort((a,b)=>a.x-b.x);
+  for(let i=0;i<cand.length;i++){
+    const t = norm(cand[i].text);
+    let m = t.match(/^S\/\.?\s*(-?[\d,]+\.\d{2}|-)\s*$/);
+    if(m) return m[1]==='-'?0:NPDF(m[1]);
+    if(/^S\/\.?$/.test(t)){
+      const nxt = norm((cand[i+1]||{}).text||'');
+      const m2 = nxt.match(/^(-?[\d,]+\.\d{2}|-)$/);
+      if(m2) return m2[1]==='-'?0:NPDF(m2[1]);
+    }
+  }
+  return null;
+}
+function pdfNumberNear(items, anchor, {dx=150, dyTol=3}={}){
+  const cand = items.filter(it=>Math.abs(it.y-anchor.y)<=dyTol && it.x>anchor.x && it.x<=anchor.x+dx).sort((a,b)=>a.x-b.x);
+  for(const c of cand){ if(/^\d+$/.test(norm(c.text))) return parseInt(norm(c.text),10); }
+  return null;
+}
+
+// ---- cabecera de una página de detalle (solo aparece en la primera página de la tabla) ----
+function parsePdfDetalleHeader(lines){
+  let flota='', movil='', semana='';
+  for(const ln of lines.slice(0,3)){
+    const t = ln.tok.join(' ');
+    if(/MOVIL/i.test(t)){
+      const mIdx = ln.tok.findIndex(x=>/^\d+$/.test(x));
+      if(mIdx>=0) movil = ln.tok[mIdx];
+      const semTok = ln.tok.find(x=>up(x).includes('SEMANA DE LIQUIDACIÓN'));
+      if(semTok) semana = semTok;
+    }
+    if(up(t).includes('DETALLE DE SERVICIOS')){
+      const rest = ln.tok.filter(x=>!up(x).includes('DETALLE DE SERVICIOS'));
+      if(rest.length) flota = rest.join(' ');
+    }
+  }
+  // si la flota viene truncada (el PDF corta el texto), intenta emparejar con la lista de flotas conocidas
+  if(flota){
+    const F = up(flota);
+    const known = FLOTAS_CONOCIDAS_PDF.find(k=>k.startsWith(F)||F.startsWith(k));
+    if(known) flota = known;
+  }
+  return {flota, movil, semana};
+}
+// ---- filas de la tabla de detalle (se puede llamar en CUALQUIER página que tenga filas numeradas,
+//      porque la tabla puede continuar en varias páginas sin repetir el encabezado) ----
+function parsePdfDetalleRows(lines, startN){
+  const rows=[];
+  for(let i=0;i<lines.length;i++){
+    const tok = lines[i].tok;
+    if(!/^\d+$/.test(tok[0])) continue;
+    if(tok.length<15) continue;
+    const sIdx = tok.reduce((acc,t,idx)=>{ if(t==='S/.') acc.push(idx); return acc; },[]);
+    if(sIdx.length<4) continue;
+    const valAfter = idx => { const v=tok[idx+1]; return v==='-'? 0 : NPDF(v); };
+    const servicio = tok[1], fecha = tok[2];
+    const peaje = valAfter(sIdx[0]);
+    const liquidar = valAfter(sIdx[1]);
+    const total = valAfter(sIdx[2]);
+    const conductor = valAfter(sIdx[3]);
+    const tipoPago = tok[sIdx[0]-1];
+    const medioPago = tok[sIdx[0]-2];
+    const unidadNeg = tok[sIdx[0]-3];
+    const clienteName = tok.slice(3, sIdx[0]-3).join(' ');
+    const esPart = up(clienteName).includes('PARTICULAR');
+    rows.push({
+      n: startN+rows.length, servicio, fecha, cliente: clienteName,
+      unidad: unidadNeg, medio: medioPago, tipo: tipoPago,
+      peaje, liquidar, total, conductor,
+      razon: esPart?'part':'corp'
+    });
+  }
+  return rows;
+}
+
+// ---- PÁGINA de resumen / balance ----
+function parsePdfResumen(items2){
+  const clean = items2.filter(it=>it.text&&it.text.trim())
+    .sort((a,b)=> (Math.round(a.y/3)-Math.round(b.y/3)) || (a.x-b.x));
+
+  let nombre='';
+  const balAnchor = pdfFindItem(clean, t=>t.includes('BALANCE DE LA SEMANA'));
+  if(balAnchor){
+    const cand = clean.filter(it=>Math.abs(it.y-balAnchor.y)<=3 && it.x>balAnchor.x).sort((a,b)=>a.x-b.x)[0];
+    if(cand) nombre = norm(cand.text);
+  }
+  let movil='';
+  const movAnchor = pdfFindItem(clean, t=>t.includes('CÓDIGO DE MÓVIL'));
+  if(movAnchor){ const num=pdfNumberNear(clean, movAnchor); if(num!=null) movil=String(num); }
+  let semana='';
+  const semItem = pdfFindItem(clean, t=>t.includes('SEMANA DE LIQUIDACIÓN'));
+  if(semItem) semana = norm(semItem.text);
+  let categoria=''; // el PDF de liquidación no suele traer la categoría del conductor
+
+  // producción: se ubica de forma RELATIVA al ancla "Producción total" (la posición absoluta en la
+  // página varía según el tamaño/orientación del PDF, así que no usamos coordenadas fijas)
+  const prodAnchor = pdfFindItem(clean, t=>t==='PRODUCCIÓN TOTAL');
+  const prod = prodAnchor ? (pdfAmountNear(clean,prodAnchor)||0) : 0;
+  const zoneY = prodAnchor ? prodAnchor.y : 0;
+  const topZone = clean.filter(it=>it.y>=zoneY-2 && it.y<=zoneY+40);
+  const tickAnchor = pdfFindItem(topZone, t=>t==='TICKET PROMEDIO');
+  const ticket = tickAnchor ? (pdfAmountNear(clean,tickAnchor)||0) : 0;
+  const cantAnchor = pdfFindItem(topZone, t=>t==='CANTIDAD DE SERVICIOS');
+  const cantSvc = cantAnchor ? (pdfNumberNear(clean,cantAnchor)||0) : 0;
+
+  // bloque central: Total Servicios Corp/Part/Efectivo + Monto para el conductor (col. izquierda, x<330)
+  function findBlockAnchor(text){ return clean.find(it=>up(it.text).includes(up(text)) && it.x<330); }
+  function blockPair(includesText){
+    const a = findBlockAnchor(includesText);
+    if(!a) return {total:0,cond:0};
+    const total = pdfAmountNear(clean, a, {dx:260})||0;
+    const condAnchor = clean.find(it=>up(it.text).includes('MONTO PARA EL CONDUCTOR') && it.y>a.y && it.y<=a.y+18 && it.x<330);
+    const cond = condAnchor ? (pdfAmountNear(clean,condAnchor,{dx:260})||0) : 0;
+    return {total,cond};
+  }
+  const bCorp = blockPair('SERVICIOS CORPORATIVOS');
+  const bPart = blockPair('SERVICIOS PARTICULARES');
+  const bEfe  = blockPair('SERVICIOS EN EFECTIVO');
+
+  // montos a facturar: dos sub-bloques "Total Servicios / Total para facturar" (medios corp y particulares).
+  // El recuadro se acota de forma RELATIVA al ancla "Total para facturar" de cada sub-bloque,
+  // no con píxeles fijos, porque la posición cambia según el tamaño de página del PDF.
+  const factHeaders = clean.filter(it=>up(it.text)==='TOTAL PARA FACTURAR').sort((a,b)=>a.y-b.y);
+  function readFactSubblock(header, maxDown=40){
+    if(!header) return {rows:[]};
+    const xMin = header.x-100, xMax = header.x+50;
+    const lineItems = clean.filter(it=>it.y>header.y-1 && it.y<=header.y+maxDown && it.x>=xMin && it.x<=xMax);
+    const lines = pdfBuildLines(lineItems, 3);
+    const rows=[];
+    for(const ln of lines){
+      const labTok = ln.tok.find(t=>!/^S\/\.?$/.test(t) && !/^-?[\d,]+(\.\d{2})?$/.test(t) && t!=='-');
+      if(!labTok) continue;
+      const amounts=[];
+      for(let i=0;i<ln.tok.length;i++){
+        const t = ln.tok[i];
+        const m = t.match(/^S\/\.?\s*(-?[\d,]+\.\d{2}|-)\s*$/);
+        if(m){ amounts.push(m[1]==='-'?0:NPDF(m[1])); continue; }
+        if(/^S\/\.?$/.test(t)){
+          const nxt = ln.tok[i+1];
+          if(nxt && /^(-?[\d,]+\.\d{2}|-)$/.test(nxt)) amounts.push(nxt==='-'?0:NPDF(nxt));
+        }
+      }
+      if(amounts.length>=1) rows.push({label:labTok, bruto:amounts[0], fact:amounts[1]??amounts[0]});
+    }
+    return {rows};
+  }
+  const factCorp = readFactSubblock(factHeaders[0], 16);
+  const factPart = readFactSubblock(factHeaders[1]);
+  function brutoByMedio(rows, medio){ const r=rows.find(x=>up(x.label)===up(medio)); return r?r.bruto:0; }
+  const brutoEfectivo = brutoByMedio(factPart.rows,'Efectivo');
+  const brutoYape = brutoByMedio(factPart.rows,'Yape');
+  const brutoVisa = brutoByMedio(factPart.rows,'Visa');
+  const brutoVisaLink = brutoByMedio(factPart.rows,'Visa Link');
+  const brutoPosVisa = brutoByMedio(factPart.rows,'POS VISA');
+
+  // descuentos / reposiciones: ítems entre el encabezado de columna y su "Total ..."
+  function readItemsBox(headerText, totalText){
+    const h = pdfFindItem(clean, t=>t===up(headerText));
+    const tot = pdfFindItem(clean, t=>t.startsWith(up(totalText)));
+    if(!h||!tot) return {items:[], total:0};
+    const xMin = h.x-70, xMax = h.x+90;
+    const region = clean.filter(it=>it.x>=xMin&&it.x<=xMax&&it.y>h.y&&it.y<tot.y);
+    const lines = pdfBuildLines(region, 3);
+    const items=[];
+    for(const ln of lines){
+      const labTok = ln.tok.filter(t=>!/^S\/\.?$/.test(t) && !/^-?[\d,]+(\.\d{2})?$/.test(t) && t!=='-');
+      const label = labTok.join(' ').trim();
+      if(!label) continue;
+      let val=0;
+      for(let i=0;i<ln.tok.length;i++){
+        const t=ln.tok[i];
+        const m=t.match(/^S\/\.?\s*(-?[\d,]+\.\d{2}|-)\s*$/);
+        if(m){ val=m[1]==='-'?0:NPDF(m[1]); break; }
+        if(/^S\/\.?$/.test(t) && ln.tok[i+1] && /^(-?[\d,]+\.\d{2}|-)$/.test(ln.tok[i+1])){
+          val = ln.tok[i+1]==='-'?0:NPDF(ln.tok[i+1]); break;
+        }
+      }
+      if(val>0) items.push({label, val});
+    }
+    const total = pdfAmountNear(clean, tot, {dx:120}) || 0;
+    return {items, total};
+  }
+  const descBlock = readItemsBox('Descuentos','Total Descuentos');
+  const repoBlock = readItemsBox('Reposiciones','Total Reposiciones');
+
+  // montos a depositar (3 columnas: corporativos / particulares / peajes)
+  function depositoBy(tagAnchorText){
+    const a = pdfFindItem(clean, t=>t.includes(tagAnchorText));
+    if(!a) return 0;
+    const cand = clean.filter(it=>it.y>a.y && it.y<=a.y+25 && Math.abs(it.x-a.x)<=40).sort((x,y)=>x.y-y.y);
+    for(const c of cand){
+      const m = norm(c.text).match(/^S\/\.?\s*(-?[\d,]+\.\d{2}|0\.00)\s*$/);
+      if(m) return NPDF(m[1]);
+    }
+    return 0;
+  }
+  const depCorp = depositoBy('(CORPORATIVOS)');
+  const depPart = depositoBy('(PARTICULARES)');
+  const depPeaje = depositoBy('(PEAJES)');
+
+  // liquidaciones pasadas no cobradas
+  function pasadasBy(tag){
+    const a = pdfFindItem(clean, t=>t.includes(tag));
+    if(!a) return 0;
+    const cand = clean.filter(it=>it.y>a.y-5 && it.y<=a.y+20 && Math.abs(it.x-a.x)<=40).sort((x,y)=>x.y-y.y);
+    for(const c of cand){
+      const m = norm(c.text).match(/^S\/\.?\s*(-?[\d,]+\.\d{2}|0\.00)\s*$/);
+      if(m) return NPDF(m[1]);
+    }
+    return 0;
+  }
+  const pasadasCorp = pasadasBy('(PROACCION)');
+  const pasadasPart = pasadasBy('(TRANSPORTES)');
+
+  // facturación por razón social (equivalente a V11/V26): se deriva de los "Monto para el conductor"
+  // corp = monto para el conductor corporativo; part = particular + efectivo (ambos cobrados como particular)
+  const facturaCorp = bCorp.cond;
+  const facturaPart = bPart.cond + bEfe.cond;
+
+  return {
+    meta:{nombre,movil,semana,categoria},
+    descuentos:descBlock.items, totDesc:descBlock.total,
+    reposiciones:repoBlock.items, totRepo:repoBlock.total,
+    deposito:{corp:depCorp,part:depPart,peaje:depPeaje},
+    central:{corp:bCorp,part:bPart,efe:bEfe},
+    factura:{corp:facturaCorp, part:facturaPart},
+    factRows:{corp:factCorp.rows, part:factPart.rows},
+    bruto:{efectivo:brutoEfectivo,yape:brutoYape,visa:brutoVisa,visaLink:brutoVisaLink,posVisa:brutoPosVisa,recaudadoConductor:brutoEfectivo+brutoYape},
+    pasadas:{corp:pasadasCorp,part:pasadasPart},
+    produccion:{prod,ticket,cantSvc}
+  };
+}
+
+// ---- combina todas las páginas en el mismo formato que produce parseWorkbook() ----
+// La tabla de detalle puede repartirse en varias páginas (sin repetir el encabezado), puede haber
+// páginas residuales (texto cortado que no cupo en la anterior) y el resumen/balance puede estar en
+// cualquier página, así que se recorren TODAS y se ubica cada cosa por su contenido, no por su número de página.
+async function parsePdfLiquidacion(arrayBuffer){
+  if(!window['pdfjsLib']) throw new Error('No se pudo cargar el lector de PDF (pdf.js). Revisa tu conexión a internet e intenta de nuevo.');
+  const doc = await pdfjsLib.getDocument({data:new Uint8Array(arrayBuffer)}).promise;
+  const itemsByPage=[], linesByPage=[];
+  for(let p=1;p<=doc.numPages;p++){
+    const items = await pdfGetPageItems(doc,p);
+    itemsByPage.push(items);
+    linesByPage.push(pdfBuildLines(items));
+  }
+  const resumenIdx = itemsByPage.findIndex(items=>items.some(it=>up(it.text).includes('BALANCE DE LA SEMANA')));
+  if(resumenIdx<0) throw new Error('No se encontró la página de resumen/balance ("Este es tu balance de la semana") en el PDF.');
+
+  let metaHeader={flota:'',movil:'',semana:''};
+  let services=[];
+  for(const lines of linesByPage){
+    const h = parsePdfDetalleHeader(lines);
+    if(h.movil && !metaHeader.movil) metaHeader.movil=h.movil;
+    if(h.semana && !metaHeader.semana) metaHeader.semana=h.semana;
+    if(h.flota && !metaHeader.flota) metaHeader.flota=h.flota;
+    const rows = parsePdfDetalleRows(lines, services.length+1);
+    if(rows.length) services = services.concat(rows);
+  }
+  const res = parsePdfResumen(itemsByPage[resumenIdx]);
+  const nombre = res.meta.nombre;
+  const movil = metaHeader.movil || res.meta.movil;
+  const semana = metaHeader.semana || res.meta.semana;
+  const categoria = res.meta.categoria || '';
+  return {
+    meta:{nombre,movil,semana,categoria,flota:metaHeader.flota,pexSemanasTexto:''},
+    services,
+    descuentos:res.descuentos,totDesc:res.totDesc,
+    reposiciones:res.reposiciones,totRepo:res.totRepo,
+    deposito:res.deposito,
+    central:res.central,
+    factura:res.factura,
+    factRows:res.factRows,
+    bruto:res.bruto,
+    pasadas:res.pasadas,
+    produccion:res.produccion
+  };
 }
 
 function parseWorkbook(wb){
@@ -1222,6 +1543,19 @@ function detectarRepoGitHub(){
   }catch(e){ return null; }
 }
 
+// ---- CARGA DESDE GOOGLE DRIVE (Apps Script Web App) ----
+// Pega aquí la URL de tu Web App (termina en /exec) una vez que la despliegues.
+const PEX_DRIVE_WEBAPP_URL = 'https://script.google.com/macros/s/AKfycbxjqQmg1hDB8TGAsoiQKxlkHVYmlwDrB4NvrDZDlXrae-5NAHSQJx7ZaBhbFiBUHtkl/exec';
+
+async function listarPexViaDrive(){
+  if(!PEX_DRIVE_WEBAPP_URL) throw new Error('drive-no-configurado');
+  const r = await fetch(PEX_DRIVE_WEBAPP_URL+'?t='+Date.now(), {cache:'no-store'});
+  if(!r.ok) throw new Error('drive-'+r.status);
+  const items = await r.json();
+  if(!Array.isArray(items)) throw new Error('drive-formato');
+  return items.map(it=>({nombre:it.nombre, url: PEX_DRIVE_WEBAPP_URL+'?id='+encodeURIComponent(it.id)}));
+}
+
 // Lista los .xlsx de la carpeta pex/ vía API de GitHub
 async function listarPexViaApi(){
   const rp = detectarRepoGitHub();
@@ -1270,12 +1604,16 @@ async function autoCargarPex(){
   try{
     setStatus('⏳ Buscando archivos PEX de la carpeta compartida…','load');
 
-    // 1) intentar listar la carpeta vía API de GitHub; si falla, caer al manifest
+    // 1) intentar Google Drive (si está configurado); si no, GitHub API; si no, manifest
     let archivos;
-    try{ archivos = await listarPexViaApi(); }
-    catch(apiErr){
-      console.info('API GitHub no disponible, intentando manifest…', apiErr.message);
-      archivos = await listarPexViaManifest();
+    try{ archivos = await listarPexViaDrive(); }
+    catch(driveErr){
+      console.info('Drive no disponible/configurado, probando GitHub…', driveErr.message);
+      try{ archivos = await listarPexViaApi(); }
+      catch(apiErr){
+        console.info('API GitHub no disponible, intentando manifest…', apiErr.message);
+        archivos = await listarPexViaManifest();
+      }
     }
     if(!archivos || !archivos.length) throw new Error('sin-archivos');
 
@@ -1674,14 +2012,23 @@ function exportPexPdf(){
 function handleFile(file){
   const err=document.getElementById('err');
   err.classList.remove('show');
+  const isPdf = /\.pdf$/i.test(file.name);
   const reader=new FileReader();
-  reader.onload=e=>{
+  reader.onload=async e=>{
     try{
-      const wb=XLSX.read(new Uint8Array(e.target.result),{type:'array',cellDates:true});
-      const D=parseWorkbook(wb);
+      let D, sheetNames=[];
+      if(isPdf){
+        D = await parsePdfLiquidacion(e.target.result);
+      } else {
+        const wb=XLSX.read(new Uint8Array(e.target.result),{type:'array',cellDates:true});
+        sheetNames = wb.SheetNames;
+        D=parseWorkbook(wb);
+      }
       if(!D.services.length){
-        throw new Error('No se encontraron servicios. Hojas detectadas: '+wb.SheetNames.join(', ')+
-          '. Verifica que el archivo tenga una hoja de detalle con la tabla de servicios (columnas N° Servicio, Cliente, Medio de Pago).');
+        throw new Error(isPdf
+          ? 'No se encontraron servicios en el PDF. Verifica que sea el PDF de liquidación del conductor (con la tabla de detalle de servicios en la primera página).'
+          : 'No se encontraron servicios. Hojas detectadas: '+sheetNames.join(', ')+
+            '. Verifica que el archivo tenga una hoja de detalle con la tabla de servicios (columnas N° Servicio, Cliente, Medio de Pago).');
       }
       LIQ=D;
       PEX_COMPUTED=null;
