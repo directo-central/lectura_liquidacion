@@ -1817,15 +1817,22 @@ function extraerDsctsRepsWb(wb){
 // Baja el maestro por trozos (cuando Google no logra convertirlo) y lo procesa aquí mismo.
 async function bajarMaestroPorTrozos(info, nLiq){
   const total = info.total;
-  const partes = [];
-  for(let k=0;k<total;k++){
-    setPexStatus(`⏳ Descargando el maestro de la LIQ #${nLiq} (parte ${k+1} de ${total})…`,'load');
-    const r = await jsonpRequest(`${PEX_DRIVE_WEBAPP_URL}?src=maestroraw&id=${encodeURIComponent(info.id)}&chunk=${k}`, 60000);
-    if(!r || r.error) throw new Error(r && r.error ? r.error : 'trozo vacío');
-    partes.push(r.base64);
-  }
+  setPexStatus(`⏳ Descargando el maestro de la LIQ #${nLiq} (${total} partes, en paralelo)…`,'load');
+
+  // los trozos se piden en paralelo (antes iban uno por uno, que era lo lento)
+  const partes = new Array(total);
+  let listos = 0;
+  await Promise.all(Array.from({length: total}, (_, k) =>
+    jsonpRequest(`${PEX_DRIVE_WEBAPP_URL}?src=maestroraw&id=${encodeURIComponent(info.id)}&chunk=${k}`, 120000)
+      .then(r=>{
+        if(!r || r.error) throw new Error(r && r.error ? r.error : 'trozo vacío');
+        partes[k] = r.base64;
+        listos++;
+        setPexStatus(`⏳ Descargando el maestro de la LIQ #${nLiq} (${listos} de ${total} partes)…`,'load');
+      })
+  ));
+
   setPexStatus(`⏳ Procesando el maestro de la LIQ #${nLiq}…`,'load');
-  // reconstruir los bytes: cada trozo se decodifica por separado y luego se concatenan
   const buffers = partes.map(b64=>{
     const bin = atob(b64);
     const u8 = new Uint8Array(bin.length);
@@ -1838,7 +1845,31 @@ async function bajarMaestroPorTrozos(info, nLiq){
   for(const b of buffers){ full.set(b, off); off+=b.length; }
 
   const wb = XLSX.read(full, {type:'array', cellDates:true});
-  return extraerDsctsRepsWb(wb);
+  const detalle = extraerDsctsRepsWb(wb);
+
+  // Devolvemos el detalle ya extraído (~0.5 MB) al Apps Script para que lo guarde en la carpeta
+  // "cache". Así el resto de la gente (y nosotros mismos en otro navegador) ya no baja los 14 MB:
+  // recibe el JSON chico al instante. Es "fire and forget": si falla, no rompe nada.
+  guardarMaestroEnCache(nLiq, detalle);
+
+  return detalle;
+}
+
+// Sube el detalle extraído al caché compartido de Drive (vía doPost del Apps Script).
+// Usa mode:'no-cors' porque Apps Script no manda cabeceras CORS; no podemos leer la respuesta,
+// pero la petición sí llega, que es lo único que necesitamos.
+function guardarMaestroEnCache(nLiq, detalle){
+  try{
+    fetch(PEX_DRIVE_WEBAPP_URL, {
+      method: 'POST',
+      mode: 'no-cors',
+      headers: {'Content-Type':'text/plain;charset=utf-8'}, // text/plain evita el preflight CORS
+      body: JSON.stringify({liq: nLiq, detalle})
+    }).then(()=>console.info(`Detalle de la LIQ #${nLiq} enviado al caché compartido`))
+      .catch(e=>console.info('No se pudo guardar el detalle en el caché compartido', e));
+  }catch(e){
+    console.info('No se pudo guardar el detalle en el caché compartido', e);
+  }
 }
 
 async function cargarMaestroDetalle(){
