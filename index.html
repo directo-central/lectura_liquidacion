@@ -1638,19 +1638,27 @@ async function listarPexViaManifest(){
   });
 }
 
+// Índice de archivos PEX disponibles en la carpeta (listado, SIN descargar contenido todavía)
+let PEX_INDEX = [];
+
+function setPexStatus(html, cls){
+  ['pexAutoStatus','pexAutoStatusHome'].forEach(id=>{
+    const el = document.getElementById(id);
+    if(el){ el.className='pexauto '+(cls||''); el.innerHTML=html; el.style.display='block'; }
+  });
+}
+function hidePexStatus(){
+  ['pexAutoStatus','pexAutoStatusHome'].forEach(id=>{
+    const el = document.getElementById(id);
+    if(el) el.style.display='none';
+  });
+}
+
 async function autoCargarPex(){
   if(PEX_AUTO_DONE) return;
   PEX_AUTO_DONE = true;
-  const statusEl = document.getElementById('pexAutoStatus');
-  const statusHome = document.getElementById('pexAutoStatusHome');
-  const setStatus = (html,cls) => {
-    [statusEl, statusHome].forEach(el=>{
-      if(el){ el.className='pexauto '+(cls||''); el.innerHTML=html; el.style.display='block'; }
-    });
-  };
-  const hideStatus = () => { [statusEl, statusHome].forEach(el=>{ if(el) el.style.display='none'; }); };
   try{
-    setStatus('⏳ Buscando archivos PEX de la carpeta compartida…','load');
+    setPexStatus('⏳ Buscando archivos PEX de la carpeta compartida…','load');
 
     // 1) intentar Google Drive (si está configurado); si no, GitHub API; si no, manifest
     let archivos;
@@ -1665,54 +1673,80 @@ async function autoCargarPex(){
     }
     if(!archivos || !archivos.length) throw new Error('sin-archivos');
 
-    // 2) descargar y procesar TODOS los archivos en paralelo (antes era uno por uno, muy lento con 20+ archivos)
-    const resultados = await Promise.allSettled(archivos.map(async item=>{
+    // 2) Solo indexamos (nombre → semana/liq). NO descargamos el contenido todavía:
+    //    bajar los 25 archivos tarda mucho y la liquidación normalmente solo necesita 2-3 semanas.
+    //    El contenido se descarga bajo demanda en cargarPexNecesarios().
+    PEX_INDEX = archivos.map(a=>({
+      ...a,
+      semana: semanaDeNombre(a.nombre),
+      liq: liqDeNombre(a.nombre)
+    }));
+    // si hay varios archivos para la misma semana de peajes, nos quedamos con el más reciente
+    const porSemana = new Map();
+    for(const a of PEX_INDEX){
+      if(a.semana==null) continue;
+      const prev = porSemana.get(a.semana);
+      const tPrev = prev && prev.modificado ? new Date(prev.modificado).getTime() : -1;
+      const tAct  = a.modificado ? new Date(a.modificado).getTime() : 0;
+      if(!prev || tAct >= tPrev) porSemana.set(a.semana, a);
+    }
+    PEX_INDEX = [...porSemana.values()].sort((a,b)=>(a.semana||999)-(b.semana||999));
+
+    const semsDisp = PEX_INDEX.map(a=>a.semana).filter(x=>x!=null);
+    setPexStatus(`✅ <b>${PEX_INDEX.length} archivo(s) PEX</b> disponibles en la carpeta${semsDisp.length?` (semana(s) ${semsDisp[0]}–${semsDisp[semsDisp.length-1]})`:''}. Sube la liquidación y se descargará solo lo necesario.`,'ok');
+
+    if(LIQ) await cargarPexNecesarios();
+  }catch(err){
+    hidePexStatus();
+    console.info('Carga automática de PEX no disponible, se usará carga manual.', err.message);
+  }
+}
+
+// Descarga SOLO los archivos PEX de las semanas que esta liquidación descuenta (Q31)
+async function cargarPexNecesarios(){
+  if(!LIQ || !PEX_INDEX.length) return;
+  const semsQ31 = semanasEnTexto(LIQ.meta.pexSemanasTexto);
+  // si la liquidación no declara semanas, no sabemos cuáles bajar → las bajamos todas (caso raro)
+  let pendientes = semsQ31.length
+    ? PEX_INDEX.filter(a=>semsQ31.includes(a.semana))
+    : PEX_INDEX.slice();
+  // no volver a bajar lo que ya está cargado
+  const yaCargadas = new Set(PEX_WEEKS.filter(w=>!w.error && w.semana!=null).map(w=>w.semana));
+  pendientes = pendientes.filter(a=>!yaCargadas.has(a.semana));
+
+  if(pendientes.length){
+    setPexStatus(`⏳ Descargando ${pendientes.length} archivo(s) PEX (semana(s) ${pendientes.map(a=>a.semana).join(', ')})…`,'load');
+    const resultados = await Promise.allSettled(pendientes.map(async item=>{
       const wb = await item.cargar();
       const res = processPexFile(wb, item.nombre);
       res.modificado = item.modificado || null;
       return res;
     }));
-
-    let cargados=0;
     for(let i=0;i<resultados.length;i++){
       const r = resultados[i];
-      if(r.status==='rejected'){ console.warn('No se pudo cargar PEX', archivos[i].nombre, r.reason); continue; }
-      const res = r.value;
-      cargados++;
-      // deduplicar por Nº de semana: si dos archivos declaran la misma semana (ej. una re-subida
-      // con nombre "(1)"), se queda con el que tenga fecha de modificación más reciente.
-      if(res.semana!=null){
-        const existente = PEX_WEEKS.find(w=>w.semana===res.semana && !w.error);
-        if(existente){
-          const tExist = existente.modificado ? new Date(existente.modificado).getTime() : 0;
-          const tNew = res.modificado ? new Date(res.modificado).getTime() : 0;
-          if(tNew < tExist) continue; // el que ya teníamos es más reciente, no lo reemplazamos
-          PEX_WEEKS = PEX_WEEKS.filter(w=>w!==existente);
-        }
-      } else {
-        PEX_WEEKS = PEX_WEEKS.filter(w=>w.fname!==res.fname);
+      if(r.status==='rejected'){
+        console.warn('No se pudo cargar PEX', pendientes[i].nombre, r.reason);
+        PEX_WEEKS.push({fname:pendientes[i].nombre, semana:pendientes[i].semana, error:String(r.reason && r.reason.message || r.reason)});
+        continue;
       }
+      const res = r.value;
+      PEX_WEEKS = PEX_WEEKS.filter(w=>w.fname!==res.fname && !(w.semana===res.semana && !w.error));
       PEX_WEEKS.push(res);
     }
-    if(cargados){
-      PEX_WEEKS.sort((a,b)=>(a.semana||999)-(b.semana||999));
-      const okWeeks = PEX_WEEKS.filter(w=>!w.error);
-      const badWeeks = PEX_WEEKS.filter(w=>w.error);
-      const sems = okWeeks.map(w=>w.semana).filter(Boolean);
-      let msg = `✅ <b>${okWeeks.length} archivo(s) PEX</b> cargados${sems.length?` (semana(s) de peajes ${[...new Set(sems)].sort((a,b)=>a-b).join(', ')})`:''}.`;
-      if(badWeeks.length){
-        const detalles = badWeeks.slice(0,3).map(w=>`<li><b>${w.fname}</b>: ${w.error}</li>`).join('');
-        msg += ` <span style="color:var(--amber)">⚠ ${badWeeks.length} archivo(s) no se pudieron leer:</span><ul style="margin:4px 0 0 16px">${detalles}${badWeeks.length>3?`<li>…y ${badWeeks.length-3} más</li>`:''}</ul>`;
-      }
-      setStatus(msg, badWeeks.length && !okWeeks.length ? 'load' : 'ok');
-      if(LIQ){ refreshPexHint(); renderPex(); }
-    } else {
-      throw new Error('sin-archivos');
-    }
-  }catch(err){
-    hideStatus();
-    console.info('Carga automática de PEX no disponible, se usará carga manual.', err.message);
+    PEX_WEEKS.sort((a,b)=>(a.semana||999)-(b.semana||999));
   }
+
+  const ok = PEX_WEEKS.filter(w=>!w.error);
+  const bad = PEX_WEEKS.filter(w=>w.error);
+  const sems = ok.map(w=>w.semana).filter(x=>x!=null);
+  let msg = `✅ <b>${ok.length} archivo(s) PEX</b> cargados${sems.length?` (semana(s) de peajes ${[...new Set(sems)].sort((a,b)=>a-b).join(', ')})`:''}.`;
+  if(bad.length){
+    const detalles = bad.slice(0,3).map(w=>`<li><b>${w.fname}</b>: ${w.error}</li>`).join('');
+    msg += ` <span style="color:var(--amber)">⚠ ${bad.length} no se pudieron leer:</span><ul style="margin:4px 0 0 16px">${detalles}${bad.length>3?`<li>…y ${bad.length-3} más</li>`:''}</ul>`;
+  }
+  setPexStatus(msg, bad.length && !ok.length ? 'load' : 'ok');
+  refreshPexHint();
+  renderPex();
 }
 
 // Identifica si una etiqueta de descuento es un concepto PEX
@@ -2109,6 +2143,8 @@ function handleFile(file){
       document.getElementById('drop').style.display='none';
       document.getElementById('btnRefrescar').style.display='block';
       window.scrollTo({top:0,behavior:'smooth'});
+      // ahora que sabemos qué semanas descuenta esta liquidación, bajar solo esos PEX
+      cargarPexNecesarios().catch(e=>console.warn('No se pudieron cargar los PEX necesarios', e));
     }catch(ex){
       err.textContent='⚠ '+ex.message;
       err.classList.add('show');
