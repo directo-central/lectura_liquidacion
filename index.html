@@ -1547,13 +1547,41 @@ function detectarRepoGitHub(){
 // Pega aquí la URL de tu Web App (termina en /exec) una vez que la despliegues.
 const PEX_DRIVE_WEBAPP_URL = 'https://script.google.com/macros/s/AKfycbxjqQmg1hDB8TGAsoiQKxlkHVYmlwDrB4NvrDZDlXrae-5NAHSQJx7ZaBhbFiBUHtkl/exec';
 
+// Los Web Apps de Apps Script no mandan cabeceras CORS, así que un fetch() normal se queda
+// bloqueado en silencio. JSONP (cargar la respuesta como <script>) no está sujeto a CORS.
+function jsonpRequest(url, timeoutMs=10000){
+  return new Promise((resolve,reject)=>{
+    const cbName = 'pexJsonp_'+Math.random().toString(36).slice(2);
+    const script = document.createElement('script');
+    let done=false;
+    let timer;
+    const cleanup = ()=>{
+      done=true;
+      try{ delete window[cbName]; }catch(e){ window[cbName]=undefined; }
+      if(script.parentNode) script.parentNode.removeChild(script);
+      clearTimeout(timer);
+    };
+    timer = setTimeout(()=>{ if(done) return; cleanup(); reject(new Error('drive-timeout (Apps Script no respondió en '+(timeoutMs/1000)+'s)')); }, timeoutMs);
+    window[cbName] = (data)=>{ if(done) return; cleanup(); resolve(data); };
+    script.onerror = ()=>{ if(done) return; cleanup(); reject(new Error('drive-jsonp-error (revisa que el Apps Script esté desplegado con acceso "Cualquier usuario")')); };
+    const sep = url.includes('?') ? '&' : '?';
+    script.src = url + sep + 'callback=' + cbName + '&t=' + Date.now();
+    document.head.appendChild(script);
+  });
+}
+
 async function listarPexViaDrive(){
   if(!PEX_DRIVE_WEBAPP_URL) throw new Error('drive-no-configurado');
-  const r = await fetch(PEX_DRIVE_WEBAPP_URL+'?t='+Date.now(), {cache:'no-store'});
-  if(!r.ok) throw new Error('drive-'+r.status);
-  const items = await r.json();
+  const items = await jsonpRequest(PEX_DRIVE_WEBAPP_URL);
   if(!Array.isArray(items)) throw new Error('drive-formato');
-  return items.map(it=>({nombre:it.nombre, url: PEX_DRIVE_WEBAPP_URL+'?id='+encodeURIComponent(it.id)}));
+  return items.map(it=>({
+    nombre: it.nombre,
+    cargar: async ()=>{
+      const data = await jsonpRequest(PEX_DRIVE_WEBAPP_URL+'?id='+encodeURIComponent(it.id), 15000);
+      if(!data || !data.base64) throw new Error('drive-sin-contenido');
+      return XLSX.read(data.base64, {type:'base64', cellDates:true});
+    }
+  }));
 }
 
 // Lista los .xlsx de la carpeta pex/ vía API de GitHub
@@ -1576,7 +1604,12 @@ async function listarPexViaApi(){
         const m = String(it.download_url).match(/^(https:\/\/raw\.githubusercontent\.com\/[^/]+\/[^/]+\/[^/]+\/)(.*)$/);
         if(m){ url = m[1] + m[2].split('/').map(seg=>encodeURIComponent(decodeURIComponent(seg))).join('/'); }
       }catch(e){}
-      return {nombre:it.name, url};
+      return {nombre:it.name, cargar: async ()=>{
+        const rr = await fetch(url, {cache:'no-store'});
+        if(!rr.ok) throw new Error('github-'+rr.status);
+        const buf = await rr.arrayBuffer();
+        return XLSX.read(new Uint8Array(buf), {type:'array', cellDates:true});
+      }};
     });
 }
 
@@ -1587,7 +1620,15 @@ async function listarPexViaManifest(){
   if(!r.ok) throw new Error('no-manifest');
   const m = await r.json();
   const arr = Array.isArray(m) ? m : (m.archivos||m.files||[]);
-  return arr.map(nombre=>({nombre, url: base+'pex/'+encodeURIComponent(nombre)}));
+  return arr.map(nombre=>{
+    const url = base+'pex/'+encodeURIComponent(nombre);
+    return {nombre, cargar: async ()=>{
+      const rr = await fetch(url, {cache:'no-store'});
+      if(!rr.ok) throw new Error('manifest-'+rr.status);
+      const buf = await rr.arrayBuffer();
+      return XLSX.read(new Uint8Array(buf), {type:'array', cellDates:true});
+    }};
+  });
 }
 
 async function autoCargarPex(){
@@ -1617,19 +1658,16 @@ async function autoCargarPex(){
     }
     if(!archivos || !archivos.length) throw new Error('sin-archivos');
 
-    // 2) descargar y procesar cada archivo
+    // 2) descargar y procesar cada archivo (cada fuente sabe cómo traer su propio contenido)
     let cargados=0;
-    for(const {nombre, url} of archivos){
+    for(const item of archivos){
       try{
-        const r = await fetch(url, {cache:'no-store'});
-        if(!r.ok) continue;
-        const buf = await r.arrayBuffer();
-        const wb = XLSX.read(new Uint8Array(buf), {type:'array', cellDates:true});
-        const res = processPexFile(wb, nombre);
+        const wb = await item.cargar();
+        const res = processPexFile(wb, item.nombre);
         PEX_WEEKS = PEX_WEEKS.filter(w=>w.fname!==res.fname);
         PEX_WEEKS.push(res);
         cargados++;
-      }catch(e){ console.warn('No se pudo cargar PEX', nombre, e); }
+      }catch(e){ console.warn('No se pudo cargar PEX', item.nombre, e); }
     }
     if(cargados){
       PEX_WEEKS.sort((a,b)=>(a.semana||999)-(b.semana||999));
