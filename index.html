@@ -1770,6 +1770,77 @@ function numeroDeLiquidacion(){
   return m ? parseInt(m[1],10) : null;
 }
 
+// Extrae DSCTS + REPS de un workbook del maestro (misma lógica que el Apps Script, pero en el navegador).
+// Las hojas son varias tablas puestas lado a lado; los datos empiezan en la fila 6.
+function extraerDsctsRepsWb(wb){
+  const descuentos=[], reposiciones=[];
+  const val = (r,i)=>{ const v=r[i]; return (v===undefined||v==='') ? null : v; };
+  const fmtFecha = v=>{
+    if(v instanceof Date){
+      const dd=String(v.getDate()).padStart(2,'0'), mm=String(v.getMonth()+1).padStart(2,'0');
+      return `${dd}/${mm}/${v.getFullYear()}`;
+    }
+    return v||null;
+  };
+  const push = (arr, movil, monto, razon, svc, f, sub)=>{
+    if(movil===null||movil===''||monto===null||monto==='') return;
+    if(typeof monto!=='number' || monto===0) return;
+    arr.push({movil, monto, razon:razon||'', svc:svc||'', fecha:fmtFecha(f), sub:sub||''});
+  };
+  const grid = name=>{
+    const sh = wb.Sheets[name];
+    if(!sh) return [];
+    return XLSX.utils.sheet_to_json(sh, {header:1, raw:true, cellDates:true, defval:null});
+  };
+
+  const d = grid('DSCTS');
+  for(let i=5;i<d.length;i++){
+    const r=d[i]; if(!r) continue;
+    push(descuentos, val(r,1),  val(r,2),  val(r,3),  val(r,4), val(r,5), val(r,7));   // B:H
+    push(descuentos, val(r,10), val(r,13), val(r,12), null,     null,     val(r,14));  // J:O
+    push(descuentos, val(r,16), val(r,18), val(r,17), null,     val(r,19), 'Comisión Urbano');           // Q:T
+    push(descuentos, val(r,21), val(r,23), val(r,22), null,     null,     'Fondo de Ahorro Individual'); // V:X
+    push(descuentos, val(r,25), val(r,26), val(r,27), null,     null,     'Membresía Pex');              // Z:AB
+    push(descuentos, val(r,32), val(r,33), val(r,34), null,     null,     'Servicio Contable');          // AG:AI
+  }
+
+  const p = grid('REPS');
+  for(let j=5;j<p.length;j++){
+    const q=p[j]; if(!q) continue;
+    push(reposiciones, val(q,2),  val(q,3),  val(q,4),  val(q,5),  val(q,6), val(q,8));  // C:I
+    push(reposiciones, val(q,10), val(q,11), val(q,12), val(q,14), null, val(q,13)||'Peajes Wally + Nexus'); // K:O
+    push(reposiciones, val(q,16), val(q,17), val(q,18), val(q,19), val(q,20), val(q,22)); // Q:W
+  }
+  return {descuentos, reposiciones};
+}
+
+// Baja el maestro por trozos (cuando Google no logra convertirlo) y lo procesa aquí mismo.
+async function bajarMaestroPorTrozos(info, nLiq){
+  const total = info.total;
+  const partes = [];
+  for(let k=0;k<total;k++){
+    setPexStatus(`⏳ Descargando el maestro de la LIQ #${nLiq} (parte ${k+1} de ${total})…`,'load');
+    const r = await jsonpRequest(`${PEX_DRIVE_WEBAPP_URL}?src=maestroraw&id=${encodeURIComponent(info.id)}&chunk=${k}`, 60000);
+    if(!r || r.error) throw new Error(r && r.error ? r.error : 'trozo vacío');
+    partes.push(r.base64);
+  }
+  setPexStatus(`⏳ Procesando el maestro de la LIQ #${nLiq}…`,'load');
+  // reconstruir los bytes: cada trozo se decodifica por separado y luego se concatenan
+  const buffers = partes.map(b64=>{
+    const bin = atob(b64);
+    const u8 = new Uint8Array(bin.length);
+    for(let i=0;i<bin.length;i++) u8[i]=bin.charCodeAt(i);
+    return u8;
+  });
+  const totalLen = buffers.reduce((a,b)=>a+b.length,0);
+  const full = new Uint8Array(totalLen);
+  let off=0;
+  for(const b of buffers){ full.set(b, off); off+=b.length; }
+
+  const wb = XLSX.read(full, {type:'array', cellDates:true});
+  return extraerDsctsRepsWb(wb);
+}
+
 async function cargarMaestroDetalle(){
   MAESTRO_DET = null;
   if(!PEX_DRIVE_WEBAPP_URL || !LIQ) return;
@@ -1780,11 +1851,33 @@ async function cargarMaestroDetalle(){
     return;
   }
   try{
-    setPexStatus(`⏳ Buscando el detalle de descuentos y reposiciones de la LIQ #${nLiq}… (la primera vez de cada semana puede tardar ~1 min)`,'load');
-    // la primera consulta de una semana nueva convierte el .xlsx; luego va en caché
-    const data = await jsonpRequest(`${PEX_DRIVE_WEBAPP_URL}?src=maestro&liq=${nLiq}`, 180000);
-    if(!data) throw new Error('respuesta vacía');
-    if(data.error) throw new Error(data.error);
+    let data = null;
+
+    // caché local del navegador: evita volver a bajar/procesar el maestro de esa semana
+    const ckey = 'maestro_liq_'+nLiq;
+    try{
+      const raw = localStorage.getItem(ckey);
+      if(raw) data = JSON.parse(raw);
+    }catch(e){ /* localStorage puede no estar disponible */ }
+
+    if(!data){
+      setPexStatus(`⏳ Buscando el detalle de descuentos y reposiciones de la LIQ #${nLiq}… (la primera vez de cada semana puede tardar)`,'load');
+      const resp = await jsonpRequest(`${PEX_DRIVE_WEBAPP_URL}?src=maestro&liq=${nLiq}`, 180000);
+      if(!resp) throw new Error('respuesta vacía');
+      if(resp.error) throw new Error(resp.error);
+
+      if(resp.needsClient){
+        // Google no pudo convertir el .xlsx (muy pesado/complejo): lo bajamos y procesamos aquí
+        console.info('Maestro: conversión en Google falló, procesando en el navegador. Motivo:', resp.motivo);
+        data = await bajarMaestroPorTrozos(resp, nLiq);
+      } else {
+        data = resp;
+      }
+
+      try{ localStorage.setItem(ckey, JSON.stringify(data)); }
+      catch(e){ console.info('No se pudo guardar el maestro en caché local (probablemente por tamaño)', e); }
+    }
+
     const mismoMovil = x => String(x.movil||'').trim() === movil;
     MAESTRO_DET = {
       desc: (data.descuentos||[]).filter(mismoMovil),
