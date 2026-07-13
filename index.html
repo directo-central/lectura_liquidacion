@@ -1775,20 +1775,31 @@ async function cargarMaestroDetalle(){
   if(!PEX_DRIVE_WEBAPP_URL || !LIQ) return;
   const nLiq = numeroDeLiquidacion();
   const movil = String(LIQ.meta.movil||'').trim();
-  if(!nLiq || !movil) return;
+  if(!nLiq || !movil){
+    console.warn('Maestro: no se pudo determinar liq/móvil', {semana:LIQ.meta.semana, movil:LIQ.meta.movil});
+    return;
+  }
   try{
-    setPexStatus(`⏳ Buscando el detalle de descuentos y reposiciones de la LIQ #${nLiq}…`,'load');
-    // la primera consulta de una semana nueva convierte el .xlsx (puede tardar ~1 min); luego va en caché
+    setPexStatus(`⏳ Buscando el detalle de descuentos y reposiciones de la LIQ #${nLiq}… (la primera vez de cada semana puede tardar ~1 min)`,'load');
+    // la primera consulta de una semana nueva convierte el .xlsx; luego va en caché
     const data = await jsonpRequest(`${PEX_DRIVE_WEBAPP_URL}?src=maestro&liq=${nLiq}`, 180000);
-    if(!data || data.error) throw new Error(data && data.error ? data.error : 'sin-datos');
+    if(!data) throw new Error('respuesta vacía');
+    if(data.error) throw new Error(data.error);
     const mismoMovil = x => String(x.movil||'').trim() === movil;
     MAESTRO_DET = {
       desc: (data.descuentos||[]).filter(mismoMovil),
       reps: (data.reposiciones||[]).filter(mismoMovil)
     };
-    console.info(`Maestro LIQ #${nLiq}: ${MAESTRO_DET.desc.length} descuento(s) y ${MAESTRO_DET.reps.length} reposición(es) del móvil ${movil}`);
+    console.info(`Maestro LIQ #${nLiq}: ${(data.descuentos||[]).length} dsctos / ${(data.reposiciones||[]).length} reps en total; del móvil ${movil}: ${MAESTRO_DET.desc.length} y ${MAESTRO_DET.reps.length}`);
+    if(!MAESTRO_DET.desc.length && !MAESTRO_DET.reps.length){
+      setPexStatus(`⚠ El maestro de la LIQ #${nLiq} se leyó, pero no tiene líneas para el móvil <b>${movil}</b>.`,'load');
+    } else {
+      setPexStatus(`✅ Detalle del maestro LIQ #${nLiq} cargado (${MAESTRO_DET.desc.length} descuento(s), ${MAESTRO_DET.reps.length} reposición(es) del móvil ${movil}). Despliega las filas para ver el desglose.`,'ok');
+    }
   }catch(e){
+    const motivo = (e && e.message) ? e.message : String(e);
     console.warn('No se pudo cargar el detalle del maestro', e);
+    setPexStatus(`⚠ No se pudo cargar el detalle del maestro de la LIQ #${nLiq}: <b>${motivo}</b>`,'load');
     MAESTRO_DET = null;
   }
 }
@@ -2258,12 +2269,12 @@ function handleFile(file){
       document.getElementById('drop').style.display='none';
       document.getElementById('btnRefrescar').style.display='block';
       window.scrollTo({top:0,behavior:'smooth'});
-      // ahora que sabemos qué semanas descuenta esta liquidación, bajar solo esos PEX
-      cargarPexNecesarios().catch(e=>console.warn('No se pudieron cargar los PEX necesarios', e));
-      // y el detalle de descuentos/reposiciones no-PEX desde el maestro de esa semana
-      cargarMaestroDetalle().then(()=>{
-        if(MAESTRO_DET){ renderDescuentos(); renderReposiciones(); }
-      }).catch(e=>console.warn('No se pudo cargar el maestro', e));
+      // primero los PEX de las semanas que descuenta, luego el detalle no-PEX del maestro
+      cargarPexNecesarios()
+        .catch(e=>console.warn('No se pudieron cargar los PEX necesarios', e))
+        .then(()=>cargarMaestroDetalle())
+        .then(()=>{ if(MAESTRO_DET){ renderDescuentos(); renderReposiciones(); } })
+        .catch(e=>console.warn('No se pudo cargar el maestro', e));
     }catch(ex){
       err.textContent='⚠ '+ex.message;
       err.classList.add('show');
