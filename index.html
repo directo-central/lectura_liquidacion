@@ -1328,18 +1328,7 @@ function render(D){
 
   // ---- descuentos (con desplegables PEX) ----
   renderDescuentos();
-
-  // ---- reposiciones ----
-  let rHtml='';
-  if(D.reposiciones.length){
-    D.reposiciones.forEach(r=>{
-      rHtml+=`<div class="row"><div class="l">${r.label}</div><div class="v pos">+ ${F(r.val)}</div></div>`;
-    });
-    rHtml+=`<div class="row tot"><div class="l">Total reposiciones</div><div class="v pos">+ ${F(D.totRepo)}</div></div>`;
-  } else {
-    rHtml=`<div class="row"><div class="l" style="color:var(--muted)">Sin reposiciones esta semana</div><div class="v zero">${F(0)}</div></div>`;
-  }
-  document.getElementById('reposiciones').innerHTML=rHtml;
+  renderReposiciones();
 
   // ---- filtro medios ----
   const fPago=document.getElementById('fPago');
@@ -1578,13 +1567,13 @@ function jsonpRequest(url, timeoutMs=10000){
 
 async function listarPexViaDrive(){
   if(!PEX_DRIVE_WEBAPP_URL) throw new Error('drive-no-configurado');
-  const items = await jsonpRequest(PEX_DRIVE_WEBAPP_URL);
+  const items = await jsonpRequest(PEX_DRIVE_WEBAPP_URL+'?src=pex');
   if(!Array.isArray(items)) throw new Error('drive-formato');
   return items.map(it=>({
     nombre: it.nombre,
     modificado: it.modificado,
     cargar: async ()=>{
-      const data = await jsonpRequest(PEX_DRIVE_WEBAPP_URL+'?id='+encodeURIComponent(it.id), 15000);
+      const data = await jsonpRequest(PEX_DRIVE_WEBAPP_URL+'?src=pex&id='+encodeURIComponent(it.id), 15000);
       if(!data || !data.base64) throw new Error('drive-sin-contenido');
       return XLSX.read(data.base64, {type:'base64', cellDates:true});
     }
@@ -1658,7 +1647,9 @@ async function autoCargarPex(){
   if(PEX_AUTO_DONE) return;
   PEX_AUTO_DONE = true;
   try{
-    setPexStatus('⏳ Buscando archivos PEX de la carpeta compartida…','load');
+    // El listado inicial es silencioso a propósito: el usuario debe poder subir su liquidación
+    // de inmediato, sin la impresión de que tiene que esperar a que algo termine de cargar.
+    hidePexStatus();
 
     // 1) intentar Google Drive (si está configurado); si no, GitHub API; si no, manifest
     let archivos;
@@ -1690,8 +1681,6 @@ async function autoCargarPex(){
     }).sort((a,b)=>(a.semana||999)-(b.semana||999));
 
     console.info('PEX indexados:', PEX_INDEX.map(a=>`${a.nombre} → semana ${a.semana}, liq ${a.liq}`));
-    const semsDisp = PEX_INDEX.map(a=>a.semana).filter(x=>x!=null);
-    setPexStatus(`✅ <b>${PEX_INDEX.length} archivo(s) PEX</b> disponibles en la carpeta${semsDisp.length?` (semana(s) ${Math.min(...semsDisp)}–${Math.max(...semsDisp)})`:''}. Sube la liquidación y se descargará solo lo necesario.`,'ok');
 
     if(LIQ) await cargarPexNecesarios();
   }catch(err){
@@ -1769,6 +1758,109 @@ function esConceptoPex(label){
 }
 
 // Renderiza "Descuentos aplicados": no-PEX como filas normales + sub-sección "Descuentos PEX"
+// ---- DETALLE DEL MAESTRO (descuentos y reposiciones no-PEX) ----
+// El maestro semanal (.xlsx de ~14 MB) vive en Drive. Apps Script lo convierte una sola vez,
+// extrae las hojas DSCTS y REPS y devuelve un JSON chico (~0.5 MB) que además queda cacheado.
+let MAESTRO_DET = null;   // {desc:[...], reps:[...]} ya filtrado por el móvil de la liquidación
+
+// Extrae el nº de liquidación del texto "SEMANA DE LIQUIDACIÓN #25: DEL ..."
+function numeroDeLiquidacion(){
+  const t = LIQ && LIQ.meta ? String(LIQ.meta.semana||'') : '';
+  const m = t.match(/LIQUIDACIÓN\s*#\s*(\d{1,3})/i) || t.match(/#\s*(\d{1,3})/);
+  return m ? parseInt(m[1],10) : null;
+}
+
+async function cargarMaestroDetalle(){
+  MAESTRO_DET = null;
+  if(!PEX_DRIVE_WEBAPP_URL || !LIQ) return;
+  const nLiq = numeroDeLiquidacion();
+  const movil = String(LIQ.meta.movil||'').trim();
+  if(!nLiq || !movil) return;
+  try{
+    setPexStatus(`⏳ Buscando el detalle de descuentos y reposiciones de la LIQ #${nLiq}…`,'load');
+    // la primera consulta de una semana nueva convierte el .xlsx (puede tardar ~1 min); luego va en caché
+    const data = await jsonpRequest(`${PEX_DRIVE_WEBAPP_URL}?src=maestro&liq=${nLiq}`, 180000);
+    if(!data || data.error) throw new Error(data && data.error ? data.error : 'sin-datos');
+    const mismoMovil = x => String(x.movil||'').trim() === movil;
+    MAESTRO_DET = {
+      desc: (data.descuentos||[]).filter(mismoMovil),
+      reps: (data.reposiciones||[]).filter(mismoMovil)
+    };
+    console.info(`Maestro LIQ #${nLiq}: ${MAESTRO_DET.desc.length} descuento(s) y ${MAESTRO_DET.reps.length} reposición(es) del móvil ${movil}`);
+  }catch(e){
+    console.warn('No se pudo cargar el detalle del maestro', e);
+    MAESTRO_DET = null;
+  }
+}
+
+// Devuelve las líneas del maestro que corresponden a una etiqueta de descuento/reposición
+function maestroLinesFor(label, tipo){
+  if(!MAESTRO_DET) return [];
+  const src = tipo==='rep' ? MAESTRO_DET.reps : MAESTRO_DET.desc;
+  const L = up(label);
+  return src.filter(x=>{
+    const S = up(x.sub||'');
+    return S===L || S.includes(L) || L.includes(S);
+  });
+}
+
+// Tabla desplegable con las líneas del maestro
+function maestroDetailTable(lines, tipo){
+  if(!lines.length) return '';
+  const filas = lines.map(l=>`<tr>
+      <td>${l.razon||'—'}</td>
+      <td>${l.svc||'—'}</td>
+      <td>${l.fecha||'—'}</td>
+      <td class="num">${F(N(l.monto))}</td>
+    </tr>`).join('');
+  const tot = lines.reduce((a,b)=>a+N(b.monto),0);
+  return `<table class="pexd">
+    <thead><tr><th>Motivo</th><th>Servicio</th><th>Fecha</th><th class="num">Monto</th></tr></thead>
+    <tbody>${filas}</tbody>
+    <tfoot><tr><td colspan="3"><b>Total</b></td><td class="num"><b>${F(tot)}</b></td></tr></tfoot>
+  </table>`;
+}
+
+// Reposiciones: filas desplegables si el maestro trae su detalle
+function renderReposiciones(){
+  if(!LIQ) return;
+  const D=LIQ;
+  const cont=document.getElementById('reposiciones');
+  if(!cont) return;
+  let rHtml='';
+  let idx=0;
+  if(D.reposiciones.length){
+    D.reposiciones.forEach(r=>{
+      const lines = maestroLinesFor(r.label,'rep');
+      const hasDetail = lines.length>0;
+      const rowId = 'rmae-'+(idx++);
+      const suma = lines.reduce((a,b)=>a+N(b.monto),0);
+      const descuadre = hasDetail && Math.abs(suma-r.val)>0.02;
+      rHtml+=`<div class="drow">
+        <div class="row" ${hasDetail?`data-toggle="${rowId}" style="cursor:pointer"`:''}>
+          <div class="l">${hasDetail?'<span class="caret">▸</span> ':''}${r.label}${hasDetail?`<span class="hint">${lines.length} línea(s)${descuadre?` · ⚠ el detalle suma ${F(suma)}`:''}</span>`:''}</div>
+          <div class="v pos">+ ${F(r.val)}</div>
+        </div>`;
+      if(hasDetail){
+        rHtml+=`<div class="ddetail" id="${rowId}">${maestroDetailTable(lines,'rep')}</div>`;
+      }
+      rHtml+=`</div>`;
+    });
+    rHtml+=`<div class="row tot"><div class="l">Total reposiciones</div><div class="v pos">+ ${F(D.totRepo)}</div></div>`;
+  } else {
+    rHtml=`<div class="row"><div class="l" style="color:var(--muted)">Sin reposiciones esta semana</div><div class="v zero">${F(0)}</div></div>`;
+  }
+  cont.innerHTML=rHtml;
+  cont.querySelectorAll('[data-toggle]').forEach(row=>{
+    row.addEventListener('click',()=>{
+      const d=document.getElementById(row.dataset.toggle);
+      const caret=row.querySelector('.caret');
+      const open=d.classList.toggle('show');
+      if(caret) caret.textContent=open?'▾':'▸';
+    });
+  });
+}
+
 function renderDescuentos(){
   if(!LIQ) return;
   const D=LIQ;
@@ -1807,12 +1899,23 @@ function renderDescuentos(){
   let dHtml='';
   let idx=0;
 
-  // ---- descuentos NO-PEX (filas normales) ----
+  // ---- descuentos NO-PEX (desplegables si el maestro trae su detalle) ----
   otrosDesc.forEach(d=>{
-    dHtml+=`<div class="drow"><div class="row">
-      <div class="l">${d.label}</div>
-      <div class="v neg">− ${F(d.val)}</div>
-    </div></div>`;
+    const lines = maestroLinesFor(d.label,'desc');
+    const hasDetail = lines.length>0;
+    const rowId = 'dmae-'+(idx++);
+    const suma = lines.reduce((a,b)=>a+N(b.monto),0);
+    // si el detalle no cuadra con el monto de la liquidación, lo advertimos en vez de ocultarlo
+    const descuadre = hasDetail && Math.abs(suma-d.val)>0.02;
+    dHtml+=`<div class="drow">
+      <div class="row" ${hasDetail?`data-toggle="${rowId}" style="cursor:pointer"`:''}>
+        <div class="l">${hasDetail?'<span class="caret">▸</span> ':''}${d.label}${hasDetail?`<span class="hint">${lines.length} línea(s)${descuadre?` · ⚠ el detalle suma ${F(suma)}`:''}</span>`:''}</div>
+        <div class="v neg">− ${F(d.val)}</div>
+      </div>`;
+    if(hasDetail){
+      dHtml+=`<div class="ddetail" id="${rowId}">${maestroDetailTable(lines,'desc')}</div>`;
+    }
+    dHtml+=`</div>`;
   });
 
   // ---- sub-sección DESCUENTOS PEX ----
@@ -2157,6 +2260,10 @@ function handleFile(file){
       window.scrollTo({top:0,behavior:'smooth'});
       // ahora que sabemos qué semanas descuenta esta liquidación, bajar solo esos PEX
       cargarPexNecesarios().catch(e=>console.warn('No se pudieron cargar los PEX necesarios', e));
+      // y el detalle de descuentos/reposiciones no-PEX desde el maestro de esa semana
+      cargarMaestroDetalle().then(()=>{
+        if(MAESTRO_DET){ renderDescuentos(); renderReposiciones(); }
+      }).catch(e=>console.warn('No se pudo cargar el maestro', e));
     }catch(ex){
       err.textContent='⚠ '+ex.message;
       err.classList.add('show');
