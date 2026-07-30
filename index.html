@@ -206,6 +206,17 @@
   .btn.primary{background:var(--teal);color:#fff} .btn.primary:hover{background:var(--teal-d)}
   .btn.ghost{background:#fff;color:var(--navy);border:1px solid var(--line)} .btn.ghost:hover{background:#F8FAFC}
 
+  .drop-or{position:relative;z-index:1;color:var(--muted);font-size:12px;margin:12px 0 10px}
+  #btnBuscarMovil{position:relative;z-index:2}
+  .buscador{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:18px 20px;margin-bottom:16px}
+  .buscador-row{display:flex;flex-wrap:wrap;align-items:flex-end;gap:12px}
+  .bfield{display:flex;flex-direction:column;gap:5px}
+  .bfield label{font-size:11.5px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.3px}
+  .bfield input{padding:9px 12px;border:1px solid var(--line);border-radius:9px;font-size:14px;font-family:inherit;width:130px}
+  .bfield input:focus{outline:none;border-color:var(--teal)}
+  .buscador-hint{font-size:12px;color:var(--muted);margin-top:10px}
+  .badge-maestro{display:inline-block;font-size:11px;font-weight:700;padding:2px 9px;border-radius:20px;background:#EEF6FF;color:#1D4ED8;margin-left:8px;vertical-align:middle}
+
   .formula{background:var(--navy);color:#fff;border-radius:12px;padding:16px 20px;margin-top:16px}
   .formula h3{font-size:13px;font-weight:700;margin-bottom:10px;opacity:.85}
   .formula .eq{display:flex;flex-wrap:wrap;align-items:center;gap:8px;font-size:13px}
@@ -236,6 +247,25 @@
     <b>Haz clic o arrastra aquí la liquidación (Excel o PDF)</b>
     <small>.xlsx con las hojas de resumen y detalle, o el PDF de liquidación del conductor (ej. Liq_3206.xlsx o LIQUIDACION_N_25-2026_CONDUCTOR_380.pdf)</small>
     <input type="file" id="file" accept=".xlsx,.xls,.pdf">
+    <div class="drop-or">— o —</div>
+    <button class="btn ghost" id="btnBuscarMovil" type="button">🔎 Buscar por móvil y N° de liquidación</button>
+  </div>
+
+  <div class="buscador" id="buscadorMovil" style="display:none">
+    <div class="buscador-row">
+      <div class="bfield">
+        <label>N° de liquidación</label>
+        <input type="number" id="inpLiq" placeholder="Ej. 25" inputmode="numeric">
+      </div>
+      <div class="bfield">
+        <label>ID del móvil</label>
+        <input type="number" id="inpMovil" placeholder="Ej. 380" inputmode="numeric">
+      </div>
+      <button class="btn primary" id="btnGoBuscar" type="button">Ver desglose</button>
+      <button class="btn ghost" id="btnCerrarBuscar" type="button">Cancelar</button>
+    </div>
+    <div class="buscador-hint">Trae la información directamente del maestro semanal en Drive («LIQ. XX TODAS LAS FLOTAS…»), sin necesidad de subir el archivo del conductor.</div>
+    <div class="pexauto" id="buscadorStatus" style="display:none"></div>
   </div>
   <div class="pexhint" id="pexKeptHint" style="display:none"></div>
 
@@ -1793,7 +1823,11 @@ function extraerDsctsRepsWb(wb){
     return XLSX.utils.sheet_to_json(sh, {header:1, raw:true, cellDates:true, defval:null});
   };
 
+  // ---- DESCUENTOS (hoja DSCTS; encabezados en idx 4, datos desde idx 5) ----
+  let textoPex='';
   const d = grid('DSCTS');
+  // el texto Q31 ("DSCTO. DE PEX LIQ. #22...") vive en la fila de encabezado (idx 4), col AK=36
+  if(d[4] && d[4][36] && String(d[4][36]).toUpperCase().includes('PEX')) textoPex = String(d[4][36]);
   for(let i=5;i<d.length;i++){
     const r=d[i]; if(!r) continue;
     push(descuentos, val(r,1),  val(r,2),  val(r,3),  val(r,4), val(r,5), val(r,7));   // B:H
@@ -1804,20 +1838,149 @@ function extraerDsctsRepsWb(wb){
     push(descuentos, val(r,32), val(r,33), val(r,34), null,     null,     'Servicio Contable');          // AG:AI
   }
 
+  // ---- REPOSICIONES (hoja REPS; encabezados en idx 3, datos desde idx 4) ----
   const p = grid('REPS');
-  for(let j=5;j<p.length;j++){
+  for(let j=4;j<p.length;j++){
     const q=p[j]; if(!q) continue;
     push(reposiciones, val(q,2),  val(q,3),  val(q,4),  val(q,5),  val(q,6), val(q,8));  // C:I
     push(reposiciones, val(q,10), val(q,11), val(q,12), val(q,14), null, val(q,13)||'Peajes Wally + Nexus'); // K:O
     push(reposiciones, val(q,16), val(q,17), val(q,18), val(q,19), val(q,20), val(q,22)); // Q:W
   }
-  return {descuentos, reposiciones};
+
+  // ---- SERVICIOS (hoja MATRIZ; encabezados en fila 4/idx 3, datos desde idx 4) ----
+  // Columnas: 0=Móvil 1=N°Servicio 2=Fecha 3=Cliente 4=Unidad 5=TipoServicio 6=TipoPago
+  //           7=Peaje 8=MontoLiquidar 9=TotalServicio 12=TotalParaConductor(sin peaje) 15=Flota
+  const servicios=[];
+  const mtz = grid('MATRIZ');
+  for(let i=4;i<mtz.length;i++){
+    const r=mtz[i]; if(!r || val(r,0)==null) continue;
+    const servicio = val(r,1);
+    const cliente = val(r,3)||'';
+    // saltar filas de subtotal que se cuelan al final del bloque de cada móvil:
+    // traen la producción en la col "servicio" y el cliente vacío (ej. servicio=2266.10, cliente="")
+    if(!servicio || !String(cliente).trim()) continue;
+    const esPart = String(cliente).toUpperCase().includes('PARTICULAR');
+    servicios.push({
+      movil: val(r,0),
+      servicio,
+      fecha: fmtFecha(val(r,2)),
+      cliente,
+      unidad: val(r,4),
+      tipoServicio: val(r,5),
+      medio: val(r,6),
+      peaje: val(r,7)||0,
+      liquidar: val(r,8)||0,
+      total: val(r,9)||0,
+      conductor: val(r,12)||0,
+      flota: val(r,15),
+      razon: esPart?'part':'corp'
+    });
+  }
+
+  // ---- RESUMEN POR CONDUCTOR (hoja LIQUIDACION, datos desde fila 6) ----
+  const resumen={};
+  const liq = grid('LIQUIDACION');
+  for(let i=5;i<liq.length;i++){
+    const r=liq[i]; if(!r || val(r,1)==null) continue;
+    resumen[String(val(r,1))] = {
+      movil: val(r,1),
+      nombre: val(r,2),
+      plaza: val(r,0),
+      prodCorp: val(r,4)||0,
+      prodNetaCorp: val(r,6)||0,
+      membresia: val(r,31)||0,
+      totDesc: val(r,45)||0,
+      totRepo: val(r,37)||0,
+      pago: val(r,46)||0,
+      emiProa: val(r,60)||0,
+      emiTrans: val(r,61)||0,
+      pasadaProa: val(r,38)||0,
+      pasadaTrans: val(r,39)||0,
+      estado: val(r,49)
+    };
+  }
+
+  return {descuentos, reposiciones, servicios, resumen, textoPex};
+}
+
+// Reconstruye el objeto de liquidación (misma forma que parseWorkbook) para UN conductor,
+// a partir del caché del maestro (data = {descuentos, reposiciones, servicios, resumen}).
+function construirLiqDesdeMaestro(data, movil, nLiq){
+  const movilNum = parseInt(String(movil).replace(/\D/g,''),10);
+  const eqMovil = m => parseInt(String(m==null?'':m).replace(/\D/g,''),10)===movilNum;
+
+  const servicios = (data.servicios||[]).filter(s=>eqMovil(s.movil))
+    .map((s,i)=>({...s, n:i+1}));
+  if(!servicios.length && !(data.resumen&&data.resumen[String(movilNum)])){
+    return null; // móvil no encontrado en el maestro
+  }
+
+  const R = (data.resumen||{})[String(movilNum)] || {};
+  const flota = R.plaza || (servicios[0]&&servicios[0].flota) || '';
+
+  // descuentos/reposiciones de este móvil, agrupados por SUB DETALLE (la etiqueta que ve el usuario)
+  const agrupar = (arr)=>{
+    const g = {};
+    arr.filter(x=>eqMovil(x.movil)).forEach(x=>{
+      const k = x.sub || x.razon || 'Otros';
+      g[k] = g[k] || {label:k, val:0};
+      g[k].val += N(x.monto);
+    });
+    return Object.values(g).filter(x=>Math.abs(x.val)>0.001);
+  };
+  const descuentos = agrupar(data.descuentos||[]);
+  const reposiciones = agrupar(data.reposiciones||[]);
+  const totDesc = R.totDesc || descuentos.reduce((a,b)=>a+b.val,0);
+  const totRepo = R.totRepo || reposiciones.reduce((a,b)=>a+b.val,0);
+
+  // producción / ticket: el PDF usa "Monto a Liquidar" (sin peaje), no "Total Servicio" (con peaje)
+  const totalCorp = servicios.filter(s=>s.razon==='corp').reduce((a,s)=>a+N(s.liquidar),0);
+  const totalPart = servicios.filter(s=>s.razon==='part').reduce((a,s)=>a+N(s.liquidar),0);
+  const prod = servicios.reduce((a,s)=>a+N(s.liquidar),0);
+  const cantSvc = servicios.length;
+  const ticket = cantSvc ? prod/cantSvc : 0;
+
+  // montos a facturar / depósitos derivados del resumen del conductor
+  const condCorp = servicios.filter(s=>s.razon==='corp').reduce((a,s)=>a+N(s.conductor),0);
+  const condPart = servicios.filter(s=>s.razon==='part').reduce((a,s)=>a+N(s.conductor),0);
+
+  // texto Q31 (semanas PEX que descuenta): el maestro trae DSCTS!AK con ese texto; si no, lo dejamos vacío
+  const pexTxt = data.textoPex || '';
+
+  return {
+    meta:{
+      nombre: R.nombre || '',
+      movil: String(movilNum),
+      semana: `SEMANA DE LIQUIDACIÓN #${nLiq}`,
+      categoria:'',
+      flota,
+      pexSemanasTexto: pexTxt,
+      estado: R.estado || '',
+      desdeMaestro: true
+    },
+    services: servicios,
+    descuentos, totDesc,
+    reposiciones, totRepo,
+    deposito:{corp: R.emiProa||0, part: R.emiTrans||0, peaje: 0},
+    central:{
+      corp:{total: totalCorp, cond: condCorp},
+      part:{total: totalPart, cond: condPart},
+      efe:{total: 0, cond: 0}
+    },
+    factura:{corp: R.emiProa||0, part: R.emiTrans||0},
+    factRows:{corp:[], part:[]},
+    bruto:{efectivo:0,yape:0,visa:0,visaLink:0,posVisa:0,recaudadoConductor:0},
+    pasadas:{corp: R.pasadaProa||0, part: R.pasadaTrans||0},
+    produccion:{prod, ticket, cantSvc},
+    _resumenMaestro: R
+  };
 }
 
 // Baja el maestro por trozos (cuando Google no logra convertirlo) y lo procesa aquí mismo.
-async function bajarMaestroPorTrozos(info, nLiq){
+async function bajarMaestroPorTrozos(info, nLiq, statusFn){
+  const setS = statusFn || setPexStatus;
   const total = info.total;
-  setPexStatus(`⏳ Descargando el maestro de la LIQ #${nLiq} (${total} partes, en paralelo)…`,'load');
+  setS(`⏳ Descargando el maestro de la LIQ #${nLiq} (${total} partes, en paralelo)…`,'load');
 
   // los trozos se piden en paralelo (antes iban uno por uno, que era lo lento)
   const partes = new Array(total);
@@ -1828,11 +1991,11 @@ async function bajarMaestroPorTrozos(info, nLiq){
         if(!r || r.error) throw new Error(r && r.error ? r.error : 'trozo vacío');
         partes[k] = r.base64;
         listos++;
-        setPexStatus(`⏳ Descargando el maestro de la LIQ #${nLiq} (${listos} de ${total} partes)…`,'load');
+        setS(`⏳ Descargando el maestro de la LIQ #${nLiq} (${listos} de ${total} partes)…`,'load');
       })
   ));
 
-  setPexStatus(`⏳ Procesando el maestro de la LIQ #${nLiq}…`,'load');
+  setS(`⏳ Procesando el maestro de la LIQ #${nLiq}…`,'load');
   const buffers = partes.map(b64=>{
     const bin = atob(b64);
     const u8 = new Uint8Array(bin.length);
@@ -1872,6 +2035,44 @@ function guardarMaestroEnCache(nLiq, detalle){
   }
 }
 
+// Obtiene el data COMPLETO del maestro de la LIQ #nLiq: {descuentos, reposiciones, servicios, resumen}.
+// Orden de preferencia: caché local del navegador → Apps Script (caché Drive o conversión) →
+// descarga por trozos y procesamiento local. Deja el resultado en ambos cachés para acelerar futuras cargas.
+async function obtenerMaestroData(nLiq, statusFn){
+  const setS = statusFn || setPexStatus;
+  const ckey = 'maestro_full_'+nLiq+'_v1';
+  try{
+    const raw = localStorage.getItem(ckey);
+    if(raw){
+      const d = JSON.parse(raw);
+      // el caché sirve si trae servicios/resumen (versiones viejas solo tenían dsctos/reps)
+      if(d && d.servicios && d.resumen) return d;
+    }
+  }catch(e){}
+
+  setS(`⏳ Buscando la información de la LIQ #${nLiq}… (la primera vez de cada semana puede tardar)`,'load');
+  const resp = await jsonpRequest(`${PEX_DRIVE_WEBAPP_URL}?src=maestro&liq=${nLiq}`, 180000);
+  if(!resp) throw new Error('respuesta vacía');
+  if(resp.error) throw new Error(resp.error);
+
+  let data;
+  if(resp.needsClient){
+    console.info('Maestro: conversión en Google no disponible, procesando en el navegador.', resp.motivo||'');
+    data = await bajarMaestroPorTrozos(resp, nLiq, setS);
+  } else if(resp.servicios && resp.resumen){
+    data = resp; // caché de Drive ya completo
+  } else {
+    // caché viejo (solo dsctos/reps): forzar reprocesamiento por trozos pidiendo el crudo
+    const info = await jsonpRequest(`${PEX_DRIVE_WEBAPP_URL}?src=maestroinfo&liq=${nLiq}`, 60000);
+    if(info && info.needsClient) data = await bajarMaestroPorTrozos(info, nLiq, setS);
+    else data = resp;
+  }
+
+  try{ localStorage.setItem(ckey, JSON.stringify(data)); }
+  catch(e){ console.info('No se pudo cachear el maestro localmente (tamaño).', e); }
+  return data;
+}
+
 async function cargarMaestroDetalle(){
   MAESTRO_DET = null;
   if(!PEX_DRIVE_WEBAPP_URL || !LIQ) return;
@@ -1882,32 +2083,7 @@ async function cargarMaestroDetalle(){
     return;
   }
   try{
-    let data = null;
-
-    // caché local del navegador: evita volver a bajar/procesar el maestro de esa semana
-    const ckey = 'maestro_liq_'+nLiq+'_v2';
-    try{
-      const raw = localStorage.getItem(ckey);
-      if(raw) data = JSON.parse(raw);
-    }catch(e){ /* localStorage puede no estar disponible */ }
-
-    if(!data){
-      setPexStatus(`⏳ Buscando el detalle de descuentos y reposiciones de la LIQ #${nLiq}… (la primera vez de cada semana puede tardar)`,'load');
-      const resp = await jsonpRequest(`${PEX_DRIVE_WEBAPP_URL}?src=maestro&liq=${nLiq}`, 180000);
-      if(!resp) throw new Error('respuesta vacía');
-      if(resp.error) throw new Error(resp.error);
-
-      if(resp.needsClient){
-        // Google no pudo convertir el .xlsx (muy pesado/complejo): lo bajamos y procesamos aquí
-        console.info('Maestro: conversión en Google falló, procesando en el navegador. Motivo:', resp.motivo);
-        data = await bajarMaestroPorTrozos(resp, nLiq);
-      } else {
-        data = resp;
-      }
-
-      try{ localStorage.setItem(ckey, JSON.stringify(data)); }
-      catch(e){ console.info('No se pudo guardar el maestro en caché local (probablemente por tamaño)', e); }
-    }
+    const data = await obtenerMaestroData(nLiq);
 
     // el móvil puede venir como número (2394) o texto ("2394", " 02394 ") según la fuente:
     // comparamos numéricamente para que el cruce no dependa del formato
@@ -2430,6 +2606,67 @@ fileInput.addEventListener('change',e=>{ if(e.target.files[0]) handleFile(e.targ
 drop.addEventListener('dragover',e=>{e.preventDefault();drop.classList.add('drag');});
 drop.addEventListener('dragleave',()=>drop.classList.remove('drag'));
 drop.addEventListener('drop',e=>{e.preventDefault();drop.classList.remove('drag');if(e.dataTransfer.files[0])handleFile(e.dataTransfer.files[0]);});
+
+// ---- BÚSQUEDA POR MÓVIL + Nº DE LIQUIDACIÓN (reconstruye el desglose desde el maestro en Drive) ----
+function setBuscadorStatus(html, cls){
+  const el=document.getElementById('buscadorStatus');
+  if(el){ el.className='pexauto '+(cls||''); el.innerHTML=html; el.style.display='block'; }
+}
+function toggleBuscador(show){
+  const b=document.getElementById('buscadorMovil');
+  const d=document.getElementById('drop');
+  if(show){ b.style.display='block'; d.style.display='none'; document.getElementById('inpLiq').focus(); }
+  else { b.style.display='none'; d.style.display='block'; }
+}
+async function buscarPorMovil(){
+  const nLiq = parseInt(String(document.getElementById('inpLiq').value).replace(/\D/g,''),10);
+  const movil = parseInt(String(document.getElementById('inpMovil').value).replace(/\D/g,''),10);
+  if(!nLiq){ setBuscadorStatus('⚠ Escribe el número de liquidación.','load'); return; }
+  if(!movil){ setBuscadorStatus('⚠ Escribe el ID del móvil.','load'); return; }
+  if(!PEX_DRIVE_WEBAPP_URL){ setBuscadorStatus('⚠ La búsqueda por móvil requiere la conexión con Drive (no configurada).','load'); return; }
+
+  try{
+    const data = await obtenerMaestroData(nLiq, setBuscadorStatus);
+    const D = construirLiqDesdeMaestro(data, movil, nLiq);
+    if(!D){
+      const muestra = Object.keys(data.resumen||{}).slice(0,8).join(', ');
+      setBuscadorStatus(`⚠ No se encontró el móvil <b>${movil}</b> en el maestro de la LIQ #${nLiq}. Móviles de ejemplo: ${muestra||'—'}`,'load');
+      return;
+    }
+
+    LIQ=D;
+    PEX_COMPUTED=null;
+    // el detalle de descuentos/reposiciones ya viene en el mismo data del maestro
+    const eqMovil = x => parseInt(String(x.movil==null?'':x.movil).replace(/\D/g,''),10)===movil;
+    MAESTRO_DET = {
+      desc: (data.descuentos||[]).filter(eqMovil),
+      reps: (data.reposiciones||[]).filter(eqMovil)
+    };
+
+    render(D);
+    // los PEX se cruzan si ya están en memoria (o se pueden cargar aparte)
+    refreshPexHint();
+    if(PEX_WEEKS.length){ renderPex(); }
+    renderDescuentos(); renderReposiciones();
+
+    document.getElementById('app').classList.add('show');
+    toggleBuscador(false);
+    document.getElementById('drop').style.display='none';
+    document.getElementById('btnRefrescar').style.display='block';
+    window.scrollTo({top:0,behavior:'smooth'});
+
+    // intentar además cargar los PEX de las semanas que descuenta (si hay conexión)
+    cargarPexNecesarios().then(()=>{ renderDescuentos(); }).catch(()=>{});
+  }catch(e){
+    const motivo = (e && e.message) ? e.message : String(e);
+    console.warn('Búsqueda por móvil falló', e);
+    setBuscadorStatus(`⚠ No se pudo obtener la LIQ #${nLiq}: <b>${motivo}</b>`,'load');
+  }
+}
+document.getElementById('btnBuscarMovil').addEventListener('click',()=>toggleBuscador(true));
+document.getElementById('btnCerrarBuscar').addEventListener('click',()=>toggleBuscador(false));
+document.getElementById('btnGoBuscar').addEventListener('click',buscarPorMovil);
+['inpLiq','inpMovil'].forEach(id=>document.getElementById(id).addEventListener('keydown',e=>{ if(e.key==='Enter') buscarPorMovil(); }));
 
 // ---- PEX listeners ----
 const dropPex=document.getElementById('dropPex'), filePex=document.getElementById('filePex');
