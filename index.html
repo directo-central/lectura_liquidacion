@@ -1743,11 +1743,21 @@ async function autoCargarPex(){
 // Descarga SOLO los archivos PEX de las semanas que esta liquidación descuenta (Q31)
 async function cargarPexNecesarios(){
   if(!LIQ || !PEX_INDEX.length) return;
-  const semsQ31 = semanasEnTexto(LIQ.meta.pexSemanasTexto);
-  // si la liquidación no declara semanas, no sabemos cuáles bajar → las bajamos todas (caso raro)
-  let pendientes = semsQ31.length
-    ? PEX_INDEX.filter(a=>semsQ31.includes(a.semana))
-    : PEX_INDEX.slice();
+  const txt = LIQ.meta.pexSemanasTexto || '';
+  const semsQ31 = semanasEnTexto(txt);
+  // Si el texto dice explícitamente que no hay descuento de PEX, no se descarga nada.
+  const sinPex = /NO\s+HAY.*PEX/i.test(txt);
+  if(sinPex || (!semsQ31.length && txt)){
+    // la liquidación declaró su situación de PEX (aunque sea "no hay"): no bajamos archivos
+    console.info('PEX: esta liquidación no descuenta PEX ('+ (txt||'sin texto') +'). No se descarga nada.');
+    return;
+  }
+  // Si no hay texto en absoluto (no pudimos leerlo), tampoco bajamos los 28 a ciegas: sería un timeout.
+  if(!semsQ31.length){
+    console.info('PEX: no se pudo determinar qué semanas descuenta esta liquidación; no se descargan PEX automáticamente.');
+    return;
+  }
+  let pendientes = PEX_INDEX.filter(a=>semsQ31.includes(a.semana));
   // no volver a bajar lo que ya está cargado
   const yaCargadas = new Set(PEX_WEEKS.filter(w=>!w.error && w.semana!=null).map(w=>w.semana));
   pendientes = pendientes.filter(a=>!yaCargadas.has(a.semana));
@@ -2112,7 +2122,7 @@ function guardarMaestroEnCache(nLiq, detalle){
 // descarga por trozos y procesamiento local. Deja el resultado en ambos cachés para acelerar futuras cargas.
 async function obtenerMaestroData(nLiq, statusFn){
   const setS = statusFn || setPexStatus;
-  const ckey = 'maestro_full_'+nLiq+'_v1';
+  const ckey = 'maestro_full_'+nLiq+'_v3';
   try{
     const raw = localStorage.getItem(ckey);
     if(raw){
