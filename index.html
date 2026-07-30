@@ -1363,9 +1363,19 @@ function render(D){
       <div class="amt">${F(factPartShow)}</div>
       <div class="cnt">${partSvc.length} servicio(s) particular(es)</div>
     </div>`;
+  const esMaestroFact = D.meta && D.meta.desdeMaestro;
+  // En modo maestro, las pasadas relevantes son las NO abonadas (BG/BH), que traen signo:
+  // negativo = deuda del conductor (se resta), positivo = saldo a su favor (se suma).
+  const pasCorpTxt = esMaestroFact ? N((D._resumenMaestro||{}).pasadaNoAbonProa) : pasadasCorp;
+  const pasPartTxt = esMaestroFact ? N((D._resumenMaestro||{}).pasadaNoAbonTrans) : pasadasPart;
+  const hayPasadas = Math.abs(pasCorpTxt)>0.001 || Math.abs(pasPartTxt)>0.001;
+  const describePasada = (v)=>{
+    if(Math.abs(v)<0.001) return `${F(0)}`;
+    return v<0 ? `${F(Math.abs(v))} (deuda, se descuenta)` : `${F(v)} (a favor, se suma)`;
+  };
   document.getElementById('factExplain').innerHTML=
     `El conductor factura por separado: servicios corporativos en <b>Proacción</b> y particulares en <b>Transportes</b>. `+
-    (pasadasTotal>0?`Incluye liquidaciones pasadas no cobradas: Proacción ${F(pasadasCorp)}, Transportes ${F(pasadasPart)}.`:'');
+    (hayPasadas?`Liquidaciones pasadas pendientes: Proacción ${describePasada(pasCorpTxt)}, Transportes ${describePasada(pasPartTxt)}.`:'');
 
   // ---- descuentos (con desplegables PEX) ----
   renderDescuentos();
@@ -1900,6 +1910,17 @@ function extraerDsctsRepsWb(wb){
   // ---- RESUMEN POR CONDUCTOR (hoja LIQUIDACION, datos desde fila 6) ----
   const resumen={};
   const liq = grid('LIQUIDACION');
+  // rango de fechas de la semana: las columnas 17..23 de la fila de encabezado (idx 4) traen los 7 días
+  let rangoFechas='';
+  if(liq[4]){
+    const dias = [17,18,19,20,21,22,23].map(c=>liq[4][c]).filter(v=>v instanceof Date);
+    if(dias.length){
+      const meses=['enero','febrero','marzo','abril','mayo','junio','julio','agosto','septiembre','octubre','noviembre','diciembre'];
+      const fmt=d=>`${d.getDate()} DE ${meses[d.getMonth()].toUpperCase()}`;
+      const ini=dias[0], fin=dias[dias.length-1];
+      rangoFechas=`DEL ${fmt(ini)} AL ${fmt(fin)}`;
+    }
+  }
   for(let i=5;i<liq.length;i++){
     const r=liq[i]; if(!r || val(r,1)==null) continue;
     resumen[String(val(r,1))] = {
@@ -1923,7 +1944,7 @@ function extraerDsctsRepsWb(wb){
     };
   }
 
-  return {descuentos, reposiciones, peajes, servicios, resumen, textoPex};
+  return {descuentos, reposiciones, peajes, servicios, resumen, textoPex, rangoFechas};
 }
 
 // Reconstruye el objeto de liquidación (misma forma que parseWorkbook) para UN conductor,
@@ -2001,7 +2022,7 @@ function construirLiqDesdeMaestro(data, movil, nLiq){
     meta:{
       nombre: R.nombre || '',
       movil: String(movilNum),
-      semana: `SEMANA DE LIQUIDACIÓN #${nLiq}`,
+      semana: `SEMANA DE LIQUIDACIÓN #${nLiq}${data.rangoFechas?': '+data.rangoFechas:''}`,
       categoria:'',
       flota,
       pexSemanasTexto: pexTxt,
@@ -2196,10 +2217,7 @@ function renderReposiciones(){
   if(!cont) return;
   let rHtml='';
   let idx=0;
-  const peajesDet = (MAESTRO_DET && MAESTRO_DET.peajes) ? MAESTRO_DET.peajes : [];
-  const totPeajeDevol = D.deposito ? N(D.deposito.peaje) : 0;
-  const hayReposiciones = D.reposiciones.length || peajesDet.length || totPeajeDevol>0;
-  if(hayReposiciones){
+  if(D.reposiciones.length){
     D.reposiciones.forEach(r=>{
       const lines = maestroLinesFor(r.label,'rep');
       const hasDetail = lines.length>0;
@@ -2217,23 +2235,6 @@ function renderReposiciones(){
       rHtml+=`</div>`;
     });
     rHtml+=`<div class="row tot"><div class="l">Total reposiciones</div><div class="v pos">+ ${F(D.totRepo)}</div></div>`;
-
-    // Devolución de peajes: se muestra aparte porque NO cuenta dentro de "Total reposiciones"
-    // (se deposita como concepto independiente). Se puede desplegar el detalle de cada peaje.
-    if(totPeajeDevol>0 || peajesDet.length){
-      const rowId='rpeaje';
-      const sumaPeajes = peajesDet.reduce((a,b)=>a+N(b.monto),0);
-      const hasDetail = peajesDet.length>0;
-      rHtml+=`<div class="drow" style="margin-top:8px;border-top:1px dashed var(--line);padding-top:8px">
-        <div class="row" ${hasDetail?`data-toggle="${rowId}" style="cursor:pointer"`:''}>
-          <div class="l">${hasDetail?'<span class="caret">▸</span> ':''}🛣️ Reposición de peajes (devolución)${hasDetail?`<span class="hint">${peajesDet.length} peaje(s)${Math.abs(sumaPeajes-totPeajeDevol)>0.02?` · detalle suma ${F(sumaPeajes)}`:''}</span>`:'<span class="hint">se deposita aparte del total de reposiciones</span>'}</div>
-          <div class="v pos">+ ${F(totPeajeDevol||sumaPeajes)}</div>
-        </div>`;
-      if(hasDetail){
-        rHtml+=`<div class="ddetail" id="${rowId}">${maestroDetailTable(peajesDet,'rep')}</div>`;
-      }
-      rHtml+=`</div>`;
-    }
   } else {
     rHtml=`<div class="row"><div class="l" style="color:var(--muted)">Sin reposiciones esta semana</div><div class="v zero">${F(0)}</div></div>`;
   }
