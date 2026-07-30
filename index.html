@@ -1107,6 +1107,9 @@ function parseWorkbook(wb){
 
 // =================== RENDER ===================
 function render(D){
+  // asegurar que la tabla de detalle de servicios use los servicios de esta liquidación
+  // (en modo PDF/Excel esto ya lo hacía parseWorkbook; en modo maestro hay que asignarlo aquí)
+  SERVICES = D.services || [];
   // ---- meta bar ----
   document.getElementById('metaBar').innerHTML = `
     <span class="who">${D.meta.nombre||'Conductor'}</span>
@@ -1140,19 +1143,21 @@ function render(D){
   // ---- MONTO A DEPOSITAR por razón social ----
   // Corporativos = facturación corp (V11) − descuentos + reposiciones + pasadas corp
   // Particulares = facturación part (V26) − recaudado por conductor (W19+W23) + pasadas part
-  // Preferimos el valor oficial de la hoja si existe; si no, lo calculamos.
+  const esMaestro = D.meta && D.meta.desdeMaestro;
   const depCorpOficial = D.deposito.corp, depPartOficial = D.deposito.part;
   const depCorpCalc = facturaCorp - totDesc + totRepo + pasadasCorp;
   const depPartCalc = facturaPart - recaudadoConductor + pasadasPart;
-  // valores "crudos" (pueden ser negativos)
-  const depoCorpRaw = (depCorpOficial!=null && depCorpOficial!==0) ? N(depCorpOficial) : depCorpCalc;
-  const depoPartRaw = (depPartOficial!=null && depPartOficial!==0) ? N(depPartOficial) : depPartCalc;
+  // En modo maestro usamos el depósito ya calculado con la fórmula oficial (D.deposito.corp/part).
+  // En modo PDF/Excel usamos el valor oficial de la hoja si existe, o el calculado.
+  const depoCorpRaw = esMaestro ? N(depCorpOficial)
+    : ((depCorpOficial!=null && depCorpOficial!==0) ? N(depCorpOficial) : depCorpCalc);
+  const depoPartRaw = esMaestro ? N(depPartOficial)
+    : ((depPartOficial!=null && depPartOficial!==0) ? N(depPartOficial) : depPartCalc);
   const depPeajeRaw = N(D.deposito.peaje);
   // REGLA: un depósito negativo no se descuenta, cuenta como 0 para el total a depositar
   const depoCorp = Math.max(0, depoCorpRaw);
   const depoPart = Math.max(0, depoPartRaw);
   const depPeajeV = Math.max(0, depPeajeRaw);
-  // banderas para mostrar el detalle del negativo
   const corpNeg = depoCorpRaw < 0, partNeg = depoPartRaw < 0, peajeNeg = depPeajeRaw < 0;
   const depoTotal = depoCorp + depoPart + depPeajeV;
 
@@ -1200,18 +1205,24 @@ function render(D){
       <div class="val" style="color:var(--teal-d)">${F(depPeajeV)}</div>
       <div class="sub">Peajes recaudados por Directo que se devuelven al conductor</div>
     </div>` : '';
+  // en modo maestro, las pasadas que entran en la fórmula son las "no abonadas" (BG/BH), que ya
+  // vienen con signo: un valor negativo resta del depósito (se suma un negativo).
+  const pasadaCorpDep = esMaestro ? N((D._resumenMaestro||{}).pasadaNoAbonProa) : pasadasCorp;
+  const pasadaPartDep = esMaestro ? N((D._resumenMaestro||{}).pasadaNoAbonTrans) : pasadasPart;
+  const subMaestroCorp = `Conductor ${F(facturaCorp)} − desc. ${F(totDesc)} + repo. ${F(totRepo)}${pasadaCorpDep?` ${pasadaCorpDep<0?'−':'+'} pasadas ${F(Math.abs(pasadaCorpDep))}`:''}`;
+  const subMaestroPart = `Factura ${F(facturaPart)} − ya cobrado ${F(recaudadoConductor)}${pasadaPartDep?` ${pasadaPartDep<0?'−':'+'} pasadas ${F(Math.abs(pasadaPartDep))}`:''}`;
   const depoBreakEl = document.getElementById('depoBreak');
   depoBreakEl.style.gridTemplateColumns = depPeajeV ? 'repeat(4,1fr)' : 'repeat(3,1fr)';
   depoBreakEl.innerHTML = `
     <div class="kpi" style="border-left:4px solid var(--blue)">
       <div class="lab">Proacción (Corporativos)</div>
       <div class="val" style="color:var(--blue)">${F(depoCorp)}</div>
-      <div class="sub">Factura ${F(facturaCorp)} − desc. ${F(totDesc)} + repo. ${F(totRepo)}${pasadasCorp?` + pasadas ${F(pasadasCorp)}`:''}${corpNeg?` → cálculo dio ${F(depoCorpRaw)}, no se descuenta (cuenta como 0)`:''}</div>
+      <div class="sub">${esMaestro? subMaestroCorp : `Factura ${F(facturaCorp)} − desc. ${F(totDesc)} + repo. ${F(totRepo)}${pasadasCorp?` + pasadas ${F(pasadasCorp)}`:''}`}${corpNeg?` → cálculo dio ${F(depoCorpRaw)}, no se descuenta (cuenta como 0)`:''}</div>
     </div>
     <div class="kpi" style="border-left:4px solid #7C3AED">
       <div class="lab">Transportes (Particulares)</div>
       <div class="val" style="color:#7C3AED">${F(depoPart)}</div>
-      <div class="sub">Factura ${F(facturaPart)} − ya cobrado ${F(recaudadoConductor)}${pasadasPart?` + pasadas ${F(pasadasPart)}`:''}${partNeg?` → cálculo dio ${F(depoPartRaw)}, no se descuenta (cuenta como 0)`:''}</div>
+      <div class="sub">${esMaestro? subMaestroPart : `Factura ${F(facturaPart)} − ya cobrado ${F(recaudadoConductor)}${pasadasPart?` + pasadas ${F(pasadasPart)}`:''}`}${partNeg?` → cálculo dio ${F(depoPartRaw)}, no se descuenta (cuenta como 0)`:''}</div>
     </div>
     ${peajeCard}
     <div class="kpi depo">
@@ -2185,7 +2196,10 @@ function renderReposiciones(){
   if(!cont) return;
   let rHtml='';
   let idx=0;
-  if(D.reposiciones.length){
+  const peajesDet = (MAESTRO_DET && MAESTRO_DET.peajes) ? MAESTRO_DET.peajes : [];
+  const totPeajeDevol = D.deposito ? N(D.deposito.peaje) : 0;
+  const hayReposiciones = D.reposiciones.length || peajesDet.length || totPeajeDevol>0;
+  if(hayReposiciones){
     D.reposiciones.forEach(r=>{
       const lines = maestroLinesFor(r.label,'rep');
       const hasDetail = lines.length>0;
@@ -2203,6 +2217,23 @@ function renderReposiciones(){
       rHtml+=`</div>`;
     });
     rHtml+=`<div class="row tot"><div class="l">Total reposiciones</div><div class="v pos">+ ${F(D.totRepo)}</div></div>`;
+
+    // Devolución de peajes: se muestra aparte porque NO cuenta dentro de "Total reposiciones"
+    // (se deposita como concepto independiente). Se puede desplegar el detalle de cada peaje.
+    if(totPeajeDevol>0 || peajesDet.length){
+      const rowId='rpeaje';
+      const sumaPeajes = peajesDet.reduce((a,b)=>a+N(b.monto),0);
+      const hasDetail = peajesDet.length>0;
+      rHtml+=`<div class="drow" style="margin-top:8px;border-top:1px dashed var(--line);padding-top:8px">
+        <div class="row" ${hasDetail?`data-toggle="${rowId}" style="cursor:pointer"`:''}>
+          <div class="l">${hasDetail?'<span class="caret">▸</span> ':''}🛣️ Reposición de peajes (devolución)${hasDetail?`<span class="hint">${peajesDet.length} peaje(s)${Math.abs(sumaPeajes-totPeajeDevol)>0.02?` · detalle suma ${F(sumaPeajes)}`:''}</span>`:'<span class="hint">se deposita aparte del total de reposiciones</span>'}</div>
+          <div class="v pos">+ ${F(totPeajeDevol||sumaPeajes)}</div>
+        </div>`;
+      if(hasDetail){
+        rHtml+=`<div class="ddetail" id="${rowId}">${maestroDetailTable(peajesDet,'rep')}</div>`;
+      }
+      rHtml+=`</div>`;
+    }
   } else {
     rHtml=`<div class="row"><div class="l" style="color:var(--muted)">Sin reposiciones esta semana</div><div class="v zero">${F(0)}</div></div>`;
   }
@@ -2676,11 +2707,12 @@ async function buscarPorMovil(){
 
     LIQ=D;
     PEX_COMPUTED=null;
-    // el detalle de descuentos/reposiciones ya viene en el mismo data del maestro
+    // el detalle de descuentos/reposiciones/peajes ya viene en el mismo data del maestro
     const eqMovil = x => parseInt(String(x.movil==null?'':x.movil).replace(/\D/g,''),10)===movil;
     MAESTRO_DET = {
       desc: (data.descuentos||[]).filter(eqMovil),
-      reps: (data.reposiciones||[]).filter(eqMovil)
+      reps: (data.reposiciones||[]).filter(eqMovil),
+      peajes: (data.peajes||[]).filter(eqMovil)
     };
 
     render(D);
