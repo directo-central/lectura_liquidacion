@@ -123,7 +123,8 @@
   .g3{grid-template-columns:repeat(3,1fr)}
   .g2{grid-template-columns:repeat(2,1fr)}
   .g-desc{grid-template-columns:1.7fr 1fr}
-  @media(max-width:920px){.g4{grid-template-columns:repeat(2,1fr)}.g3{grid-template-columns:1fr}.g2{grid-template-columns:1fr}.g-desc{grid-template-columns:1fr}}
+  .g-desc.con-peajes{grid-template-columns:1.7fr 1fr 1fr}
+  @media(max-width:920px){.g4{grid-template-columns:repeat(2,1fr)}.g3{grid-template-columns:1fr}.g2{grid-template-columns:1fr}.g-desc,.g-desc.con-peajes{grid-template-columns:1fr}}
   @media(max-width:560px){.g4{grid-template-columns:1fr}}
 
   .kpi{background:var(--card);border:1px solid var(--line);border-radius:13px;padding:16px 18px;position:relative;overflow:hidden}
@@ -310,7 +311,7 @@
     <div id="pexResult"></div>
 
     <div class="sec-title">Descuentos y reposiciones</div>
-    <div class="grid g-desc">
+    <div class="grid g-desc" id="descRepGrid">
       <div class="card">
         <h2><span class="dot" style="background:var(--red)"></span>Descuentos aplicados</h2>
         <div id="descuentos"></div>
@@ -318,6 +319,10 @@
       <div class="card">
         <h2><span class="dot" style="background:var(--green)"></span>Reposiciones y abonos</h2>
         <div id="reposiciones"></div>
+      </div>
+      <div class="card" id="peajesCard" style="display:none">
+        <h2><span class="dot" style="background:var(--teal)"></span>Peajes (Devolución)</h2>
+        <div id="peajesDevol"></div>
       </div>
     </div>
 
@@ -2257,6 +2262,50 @@ function renderReposiciones(){
       if(caret) caret.textContent=open?'▾':'▸';
     });
   });
+
+  renderPeajesDevol();
+}
+
+// Caja "Peajes (Devolución)": lista los peajes que Directo devuelve al conductor.
+// Solo se muestra cuando hay peajes a devolver (D.deposito.peaje > 0).
+function renderPeajesDevol(){
+  const card = document.getElementById('peajesCard');
+  const cont = document.getElementById('peajesDevol');
+  const grid = document.getElementById('descRepGrid');
+  if(!card || !cont) return;
+
+  const D = LIQ;
+  const totPeaje = D && D.deposito ? N(D.deposito.peaje) : 0;
+  const detalle = (MAESTRO_DET && MAESTRO_DET.peajes) ? MAESTRO_DET.peajes : [];
+
+  if(totPeaje<=0 && !detalle.length){
+    card.style.display='none';
+    if(grid) grid.classList.remove('con-peajes');
+    return;
+  }
+  card.style.display='';
+  if(grid) grid.classList.add('con-peajes');
+
+  let html='';
+  if(detalle.length){
+    detalle.forEach(p=>{
+      html+=`<div class="row">
+        <div class="l">${p.razon||'Peaje'}${p.svc?`<span class="hint">Servicio ${p.svc}</span>`:''}</div>
+        <div class="v pos">+ ${F(N(p.monto))}</div>
+      </div>`;
+    });
+    const sumaDet = detalle.reduce((a,b)=>a+N(b.monto),0);
+    const descuadre = Math.abs(sumaDet-totPeaje)>0.02 && totPeaje>0;
+    html+=`<div class="row tot">
+      <div class="l">Total peajes devueltos${descuadre?`<span class="hint">⚠ el total oficial es ${F(totPeaje)}</span>`:''}</div>
+      <div class="v pos">+ ${F(totPeaje||sumaDet)}</div>
+    </div>`;
+  } else {
+    // sin detalle línea a línea, pero sí hay monto total
+    html=`<div class="row"><div class="l">Peajes recaudados por Directo que se devuelven al conductor</div><div class="v pos">+ ${F(totPeaje)}</div></div>
+      <div class="row tot"><div class="l">Total peajes devueltos</div><div class="v pos">+ ${F(totPeaje)}</div></div>`;
+  }
+  cont.innerHTML=html;
 }
 
 function renderDescuentos(){
