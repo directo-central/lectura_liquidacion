@@ -2317,8 +2317,22 @@ function renderDescuentos(){
 
   // mapa: etiqueta de descuento PEX -> {lines, hint} para el desplegable
   function pexDetailFor(label, monto){
-    if(!PC) return null;
     const L=up(label);
+    // "Adicional - Pex con servicio - Conductores NO apto": su detalle son los servicios de ESTA
+    // liquidación con peaje (0.30 por servicio cobrable). No necesita archivos PEX de semanas pasadas:
+    // el detalle sale de la propia liquidación / maestro.
+    if(L.includes('ADICIONAL') && L.includes('SERVICIO')){
+      const svcConPeaje = (LIQ?LIQ.services:[]).filter(s=>N(s.peaje)>0).map(s=>{
+        const esLatam = up(s.cliente).includes('LATAM AIRE Y TIERRA');
+        return {...s, esLatam, cargo: esLatam?0:0.30};
+      });
+      const cobrables = svcConPeaje.filter(s=>!s.esLatam);
+      const nLatam = svcConPeaje.filter(s=>s.esLatam).length;
+      return {lines:svcConPeaje, fromLiq:true,
+        hint:`0.30 × ${cobrables.length} servicio(s) cobrable(s)${nLatam?` · ${nLatam} LATAM no cobran`:''}`};
+    }
+    // El resto de conceptos PEX (personal, incidencias, membresía) sí dependen de los archivos PEX.
+    if(!PC) return null;
     if(L.includes('PEX PERSONAL') && !L.includes('ADICIONAL'))
       return {lines:PC.personal, motivoCol:false, hint:`${PC.personal.length} peaje(s) de uso personal`};
     if(L.includes('ADICIONAL') && L.includes('PERSONAL'))
@@ -2327,11 +2341,6 @@ function renderDescuentos(){
     if(L.includes('INCIDENCIA'))
       return {lines:PC.incidenciaEfectivo, motivoCol:true,
         hint:`Incidencia ${F(PC.sumaInci)} (${PC.incidencia.length}) + Efectivo ${F(PC.sumaEfe)} (${PC.efectivo.length})`};
-    if(L.includes('ADICIONAL') && L.includes('SERVICIO')){
-      const nLatam=PC.svcConPeaje.filter(s=>s.esLatam).length;
-      return {lines:PC.svcConPeaje, fromLiq:true,
-        hint:`0.30 × ${PC.svcCobrables.length} servicio(s) cobrable(s)${nLatam?` · ${nLatam} LATAM no cobran`:''}`};
-    }
     if(L.includes('MEMBRES')) // Membresía PEX: 3.5 fijo, leído de la liquidación
       return {lines:[], info:true, hint:`Cargo semanal fijo de ${F(monto)}`};
     if(L.includes('STICKER')) // Sticker PEX: pago único por el sticker
