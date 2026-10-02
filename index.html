@@ -1221,9 +1221,9 @@ function render(D){
   depoBreakEl.style.gridTemplateColumns = depPeajeV ? 'repeat(4,1fr)' : 'repeat(3,1fr)';
   depoBreakEl.innerHTML = `
     <div class="kpi" style="border-left:4px solid var(--blue)">
-      <div class="lab">Proacción (Corporativos)</div>
-      <div class="val" style="color:var(--blue)">${F(depoCorp)}</div>
-      <div class="sub">${esMaestro? subMaestroCorp : `Factura ${F(facturaCorp)} − desc. ${F(totDesc)} + repo. ${F(totRepo)}${pasadasCorp?` + pasadas ${F(pasadasCorp)}`:''}`}${corpNeg?` → cálculo dio ${F(depoCorpRaw)}, no se descuenta (cuenta como 0)`:''}</div>
+      <span class="tag" style="background:#DBEAFE;color:var(--blue)">A FACTURAR</span><div class="lab">Proacción (Corporativos)</div>
+      <div class="val" style="color:var(--blue)">${F(facturaCorp)}</div>
+      <div class="sub"><b>Se deposita ${F(depoCorp)}</b> = ${esMaestro? subMaestroCorp : `factura ${F(facturaCorp)} − desc. ${F(totDesc)} + repo. ${F(totRepo)}${pasadasCorp?` + pasadas ${F(pasadasCorp)}`:''}`}${corpNeg?` → cálculo dio ${F(depoCorpRaw)}, no se descuenta (cuenta como 0)`:''}</div>
     </div>
     <div class="kpi" style="border-left:4px solid #7C3AED">
       <div class="lab">Transportes (Particulares)</div>
